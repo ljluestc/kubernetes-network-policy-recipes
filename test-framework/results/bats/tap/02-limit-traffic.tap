@@ -1,0 +1,73 @@
+1..6
+# Test duration: 0s
+not ok 1 02: YAML syntax should be valid in 145ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 2 02: Policy should allow traffic from pods with specific labels in 94ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 02: Policy with multiple ingress rules should allow traffic from any matching rule (OR logic) in 108ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 02: Policy should only affect pods matching podSelector in 109ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 02: Complex matchExpressions should work correctly in 128ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 6 02: Empty ingress rule allows all traffic in 93ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/02-limit-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

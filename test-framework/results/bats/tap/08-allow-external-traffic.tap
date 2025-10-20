@@ -1,0 +1,97 @@
+1..8
+# Test duration: 0s
+not ok 1 08: YAML syntax should be valid in 100ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 2 08: Policy with ipBlock should be created successfully in 92ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 08: Policy with multiple CIDR blocks (OR logic) in 95ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 08: ipBlock with except clause excludes specific ranges in 94ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 08: Combining ipBlock with podSelector in same from clause in 84ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 6 08: ipBlock allows internal cluster traffic when using cluster CIDR in 115ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 7 08: Invalid CIDR should be rejected in 88ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 8 08: ipBlock policy does not affect egress in 107ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/08-allow-external-traffic.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

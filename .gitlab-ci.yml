@@ -1,0 +1,1560 @@
+# GitLab CI/CD Pipeline for Kubernetes Network Policy Tests
+# Enhanced with multi-platform testing, container registry, advanced caching, and GitLab Pages
+
+# ═══════════════════════════════════════════════════════════════════════
+# GLOBAL VARIABLES
+# ═══════════════════════════════════════════════════════════════════════
+
+variables:
+  # Results and artifacts
+  RESULTS_DIR: "test-framework/results"
+  DOCKER_DRIVER: overlay2
+  KUBECONFIG: /tmp/kubeconfig
+
+  # Container registry configuration
+  REGISTRY_IMAGE: "${CI_REGISTRY_IMAGE}/test-runner"
+  REGISTRY_TAG: "${CI_COMMIT_REF_SLUG}-${CI_COMMIT_SHORT_SHA}"
+
+  # Caching configuration
+  DOCKER_BUILDKIT: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+
+  # Environment-specific variables (can be overridden)
+  ENV_TYPE: "development"
+  ENABLE_SECURITY_SCAN: "true"
+  ENABLE_DEPENDENCY_SCAN: "true"
+
+  # Test configuration
+  PARALLEL_JOBS: "4"
+  TEST_TIMEOUT: "600"
+
+  # Kubernetes versions for matrix testing
+  K8S_VERSION_127: "1.27.3"
+  K8S_VERSION_128: "1.28.0"
+  K8S_VERSION_129: "1.29.0"
+  K8S_VERSION_130: "1.30.0"
+
+# ═══════════════════════════════════════════════════════════════════════
+# PIPELINE STAGES
+# ═══════════════════════════════════════════════════════════════════════
+
+stages:
+  - build           # Build and push container images
+  - lint            # Code quality and security scanning
+  - scan            # Security and dependency scanning
+  - bats-tests      # Unit tests with BATS
+  - test-kind       # Local testing with kind
+  - test-cloud      # Cloud provider testing (GKE, EKS, AKS)
+  - integration     # Integration and end-to-end tests
+  - report          # Generate and publish reports
+  - deploy          # Deploy artifacts and documentation
+  - cleanup         # Cleanup resources
+
+# ═══════════════════════════════════════════════════════════════════════
+# CACHE CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════
+
+# Global cache configuration for all jobs
+.cache_template: &global_cache
+  cache:
+    key:
+      files:
+        - test-framework/requirements.txt
+        - test-framework/package.json
+      prefix: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - test-framework/.cache/
+      - ~/.cache/pip
+      - ~/.cache/pre-commit
+      - /var/lib/docker/
+    policy: pull-push
+
+# Docker layer caching
+.docker_cache: &docker_cache
+  cache:
+    key: docker-${CI_COMMIT_REF_SLUG}
+    paths:
+      - docker-cache/
+    policy: pull-push
+
+# ═══════════════════════════════════════════════════════════════════════
+# CONTAINER REGISTRY - BUILD & PUSH TEST IMAGES
+# ═══════════════════════════════════════════════════════════════════════
+
+build:test-runner-image:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    # Create Dockerfile for test runner if it doesn't exist
+    - |
+      if [ ! -f Dockerfile.test-runner ]; then
+        cat > Dockerfile.test-runner <<'EOF'
+      FROM gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+
+      # Install test dependencies
+      RUN apt-get update && apt-get install -y \
+          parallel \
+          jq \
+          bc \
+          docker.io \
+          shellcheck \
+          python3-pip \
+          git \
+          curl \
+          bash \
+          && rm -rf /var/lib/apt/lists/*
+
+      # Install kubectl
+      RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+          && chmod +x kubectl \
+          && mv kubectl /usr/local/bin/
+
+      # Install kind
+      RUN curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 \
+          && chmod +x ./kind \
+          && mv ./kind /usr/local/bin/kind
+
+      # Install AWS CLI for EKS
+      RUN pip3 install --no-cache-dir awscli
+
+      # Install Azure CLI for AKS
+      RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+      # Install Helm
+      RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      # Set working directory
+      WORKDIR /workspace
+
+      # Copy test framework
+      COPY test-framework/ /workspace/test-framework/
+
+      # Make scripts executable
+      RUN chmod +x /workspace/test-framework/*.sh
+
+      EOF
+      fi
+
+    # Build with cache from registry
+    - docker pull "${REGISTRY_IMAGE}:latest" || true
+    - |
+      docker build \
+        --cache-from "${REGISTRY_IMAGE}:latest" \
+        --tag "${REGISTRY_IMAGE}:${REGISTRY_TAG}" \
+        --tag "${REGISTRY_IMAGE}:latest" \
+        --file Dockerfile.test-runner \
+        .
+
+    # Push to GitLab Container Registry
+    - docker push "${REGISTRY_IMAGE}:${REGISTRY_TAG}"
+    - docker push "${REGISTRY_IMAGE}:latest"
+
+    # Generate image metadata
+    - |
+      cat > image-manifest.json <<EOF
+      {
+        "image": "${REGISTRY_IMAGE}:${REGISTRY_TAG}",
+        "commit": "${CI_COMMIT_SHA}",
+        "branch": "${CI_COMMIT_REF_NAME}",
+        "created": "$(date -Iseconds)",
+        "size": "$(docker image inspect ${REGISTRY_IMAGE}:${REGISTRY_TAG} --format='{{.Size}}')"
+      }
+      EOF
+    - cat image-manifest.json
+
+  artifacts:
+    paths:
+      - image-manifest.json
+    expire_in: 30 days
+
+  <<: *docker_cache
+
+  tags:
+    - docker
+
+  # Build on commits to main/master and merge requests
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# ═══════════════════════════════════════════════════════════════════════
+# LINT & CODE QUALITY
+# ═══════════════════════════════════════════════════════════════════════
+
+pre-commit:
+  stage: lint
+  image: python:3.11-alpine
+  before_script:
+    - apk add --no-cache git bash shellcheck
+    - pip install pre-commit
+  script:
+    - pre-commit run --all-files --show-diff-on-failure
+  cache:
+    key: pre-commit-${CI_COMMIT_REF_SLUG}
+    paths:
+      - ~/.cache/pre-commit
+  allow_failure: false
+  tags:
+    - docker
+
+shellcheck:lint:
+  stage: lint
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - find test-framework -name "*.sh" -type f -exec shellcheck {} +
+  allow_failure: true
+  tags:
+    - docker
+
+yaml:lint:
+  stage: lint
+  image: cytopia/yamllint:latest
+  script:
+    - yamllint -c .yamllint.yml *.yml .gitlab-ci.yml || true
+  allow_failure: true
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# SECURITY SCANNING
+# ═══════════════════════════════════════════════════════════════════════
+
+container-scanning:
+  stage: scan
+  image: docker:24
+  services:
+    - docker:24-dind
+  dependencies:
+    - build:test-runner-image
+  before_script:
+    - apk add --no-cache curl
+  script:
+    # Use Trivy for container scanning
+    - |
+      curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - trivy image --exit-code 0 --severity HIGH,CRITICAL --format json --output trivy-report.json "${REGISTRY_IMAGE}:${REGISTRY_TAG}"
+    - trivy image --exit-code 0 --severity HIGH,CRITICAL "${REGISTRY_IMAGE}:${REGISTRY_TAG}"
+
+  artifacts:
+    paths:
+      - trivy-report.json
+    reports:
+      container_scanning: trivy-report.json
+    expire_in: 30 days
+
+  allow_failure: true
+  tags:
+    - docker
+
+  rules:
+    - if: '$ENABLE_SECURITY_SCAN == "true"'
+
+dependency-scanning:
+  stage: scan
+  image: python:3.11-slim
+  before_script:
+    - pip install safety pip-audit
+  script:
+    # Scan Python dependencies
+    - |
+      if [ -f test-framework/requirements.txt ]; then
+        safety check --file test-framework/requirements.txt --output json > safety-report.json || true
+        pip-audit --requirement test-framework/requirements.txt --format json > pip-audit-report.json || true
+      fi
+
+    # Generate summary
+    - |
+      cat > dependency-scan-summary.txt <<EOF
+      Dependency Scanning Results
+      ===========================
+      Date: $(date -Iseconds)
+      Commit: ${CI_COMMIT_SHA}
+
+      See artifacts for detailed reports:
+      - safety-report.json
+      - pip-audit-report.json
+      EOF
+    - cat dependency-scan-summary.txt
+
+  artifacts:
+    paths:
+      - safety-report.json
+      - pip-audit-report.json
+      - dependency-scan-summary.txt
+    expire_in: 30 days
+
+  allow_failure: true
+  tags:
+    - docker
+
+  rules:
+    - if: '$ENABLE_DEPENDENCY_SCAN == "true"'
+
+secrets-scanning:
+  stage: scan
+  image: trufflesecurity/trufflehog:latest
+  script:
+    - trufflehog filesystem . --json --no-update > secrets-scan.json || true
+    - |
+      if [ -s secrets-scan.json ]; then
+        echo "⚠️  Potential secrets detected!"
+        cat secrets-scan.json
+        exit 1
+      else
+        echo "✓ No secrets detected"
+      fi
+
+  artifacts:
+    paths:
+      - secrets-scan.json
+    expire_in: 30 days
+    when: always
+
+  allow_failure: true
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# BATS UNIT TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+bats-tests:
+  stage: bats-tests
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  before_script:
+    # Start Docker daemon
+    - dockerd &
+    - sleep 10
+    # Create kind cluster
+    - kind create cluster --wait 300s
+  script:
+    - cd test-framework
+    - ./run-all-bats-tests.sh --output both --verbose --jobs ${PARALLEL_JOBS}
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/bats/
+    reports:
+      junit: test-framework/results/bats/junit/*.xml
+    expire_in: 30 days
+
+  parallel:
+    matrix:
+      - K8S_VERSION: ["${K8S_VERSION_127}", "${K8S_VERSION_128}", "${K8S_VERSION_129}", "${K8S_VERSION_130}"]
+
+  <<: *global_cache
+
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# KIND TESTS - LOCAL KUBERNETES
+# ═══════════════════════════════════════════════════════════════════════
+
+.test_kind_template: &test_kind_template
+  stage: test-kind
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  before_script:
+    # Start Docker daemon
+    - dockerd &
+    - sleep 10
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/
+      - kind-cluster-info.txt
+    reports:
+      junit: test-framework/junit.xml
+    expire_in: 30 days
+
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+  <<: *global_cache
+
+  tags:
+    - docker
+
+test:kind:calico:
+  <<: *test_kind_template
+  variables:
+    CNI_PLUGIN: "calico"
+  script:
+    # Create kind cluster with Calico
+    - |
+      cat > kind-config.yaml <<EOF
+      kind: Cluster
+      apiVersion: kind.x-k8s.io/v1alpha4
+      nodes:
+      - role: control-plane
+      - role: worker
+      - role: worker
+      networking:
+        disableDefaultCNI: true
+        podSubnet: "10.244.0.0/16"
+      EOF
+    - kind create cluster --config kind-config.yaml --image kindest/node:v${K8S_VERSION_128}
+
+    # Install Calico
+    - kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+    - kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l k8s-app=calico-node
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > kind-cluster-info.txt
+    - kubectl get pods -A >> kind-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --skip-unsupported --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+test:kind:cilium:
+  <<: *test_kind_template
+  variables:
+    CNI_PLUGIN: "cilium"
+  script:
+    # Create kind cluster with Cilium
+    - |
+      cat > kind-config.yaml <<EOF
+      kind: Cluster
+      apiVersion: kind.x-k8s.io/v1alpha4
+      nodes:
+      - role: control-plane
+      - role: worker
+      networking:
+        disableDefaultCNI: true
+        podSubnet: "10.244.0.0/16"
+      EOF
+    - kind create cluster --config kind-config.yaml --image kindest/node:v${K8S_VERSION_128}
+
+    # Install Cilium
+    - kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/v1.14.0/install/kubernetes/quick-install.yaml
+    - kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l k8s-app=cilium
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > kind-cluster-info.txt
+    - kubectl get pods -A >> kind-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --skip-unsupported --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+test:kind:weave:
+  <<: *test_kind_template
+  variables:
+    CNI_PLUGIN: "weave"
+  script:
+    - |
+      cat > kind-config.yaml <<EOF
+      kind: Cluster
+      apiVersion: kind.x-k8s.io/v1alpha4
+      nodes:
+      - role: control-plane
+      - role: worker
+      networking:
+        disableDefaultCNI: true
+        podSubnet: "10.244.0.0/16"
+      EOF
+    - kind create cluster --config kind-config.yaml --image kindest/node:v${K8S_VERSION_128}
+
+    # Install Weave Net
+    - kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+    - kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l name=weave-net
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > kind-cluster-info.txt
+    - kubectl get pods -A >> kind-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --skip-unsupported --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+  allow_failure: true
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLOUD PROVIDER TESTS - GKE
+# ═══════════════════════════════════════════════════════════════════════
+
+.test_gke_template: &test_gke_template
+  stage: test-cloud
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  variables:
+    GKE_CLUSTER_NAME: "np-test-${CI_PIPELINE_ID}-${CNI_PLUGIN}"
+    GKE_REGION: "us-central1"
+    GKE_MACHINE_TYPE: "e2-standard-2"
+    GKE_NUM_NODES: "2"
+
+  before_script:
+    # Authenticate with GCP
+    - echo $GCP_SERVICE_KEY | base64 -d > /tmp/gcp-key.json
+    - gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+    - gcloud config set project $GCP_PROJECT_ID
+
+  after_script:
+    # Cleanup cluster
+    - gcloud container clusters delete ${GKE_CLUSTER_NAME} --region=${GKE_REGION} --quiet || true
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/
+      - gke-cluster-info.txt
+    reports:
+      junit: test-framework/junit.xml
+    expire_in: 30 days
+
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+  tags:
+    - docker
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$ENV_TYPE == "staging" || $ENV_TYPE == "production"'
+
+test:gke:calico:
+  <<: *test_gke_template
+  variables:
+    CNI_PLUGIN: "calico"
+  script:
+    # Create GKE cluster with Calico
+    - |
+      gcloud container clusters create ${GKE_CLUSTER_NAME} \
+        --cluster-version=1.28 \
+        --machine-type=${GKE_MACHINE_TYPE} \
+        --num-nodes=${GKE_NUM_NODES} \
+        --region=${GKE_REGION} \
+        --enable-network-policy \
+        --enable-ip-alias \
+        --network-policy-provider=calico \
+        --quiet
+
+    # Get credentials
+    - gcloud container clusters get-credentials ${GKE_CLUSTER_NAME} --region=${GKE_REGION}
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > gke-cluster-info.txt
+    - kubectl get pods -A >> gke-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+test:gke:default:
+  <<: *test_gke_template
+  variables:
+    CNI_PLUGIN: "default"
+  script:
+    # Create GKE cluster with default CNI
+    - |
+      gcloud container clusters create ${GKE_CLUSTER_NAME} \
+        --cluster-version=1.28 \
+        --machine-type=${GKE_MACHINE_TYPE} \
+        --num-nodes=${GKE_NUM_NODES} \
+        --region=${GKE_REGION} \
+        --enable-network-policy \
+        --enable-ip-alias \
+        --quiet
+
+    # Get credentials
+    - gcloud container clusters get-credentials ${GKE_CLUSTER_NAME} --region=${GKE_REGION}
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > gke-cluster-info.txt
+    - kubectl get pods -A >> gke-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLOUD PROVIDER TESTS - EKS (AWS)
+# ═══════════════════════════════════════════════════════════════════════
+
+.test_eks_template: &test_eks_template
+  stage: test-cloud
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  variables:
+    EKS_CLUSTER_NAME: "np-test-${CI_PIPELINE_ID}-${CNI_PLUGIN}"
+    EKS_REGION: "us-west-2"
+    EKS_NODE_TYPE: "t3.medium"
+    EKS_NODES: "2"
+    EKS_K8S_VERSION: "1.28"
+
+  before_script:
+    # Configure AWS credentials
+    - |
+      mkdir -p ~/.aws
+      cat > ~/.aws/credentials <<EOF
+      [default]
+      aws_access_key_id = ${AWS_ACCESS_KEY_ID}
+      aws_secret_access_key = ${AWS_SECRET_ACCESS_KEY}
+      EOF
+    - |
+      cat > ~/.aws/config <<EOF
+      [default]
+      region = ${EKS_REGION}
+      output = json
+      EOF
+
+    # Install eksctl
+    - |
+      curl -sLO "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_Linux_amd64.tar.gz"
+      tar -xzf eksctl_Linux_amd64.tar.gz -C /usr/local/bin
+      chmod +x /usr/local/bin/eksctl
+
+  after_script:
+    # Cleanup EKS cluster
+    - eksctl delete cluster --name=${EKS_CLUSTER_NAME} --region=${EKS_REGION} --wait || true
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/
+      - eks-cluster-info.txt
+    reports:
+      junit: test-framework/junit.xml
+    expire_in: 30 days
+
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+  tags:
+    - docker
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$ENV_TYPE == "staging" || $ENV_TYPE == "production"'
+
+test:eks:default:
+  <<: *test_eks_template
+  variables:
+    CNI_PLUGIN: "vpc-cni"
+  script:
+    # Create EKS cluster
+    - |
+      eksctl create cluster \
+        --name=${EKS_CLUSTER_NAME} \
+        --region=${EKS_REGION} \
+        --version=${EKS_K8S_VERSION} \
+        --nodegroup-name=standard-workers \
+        --node-type=${EKS_NODE_TYPE} \
+        --nodes=${EKS_NODES} \
+        --nodes-min=2 \
+        --nodes-max=4 \
+        --managed
+
+    # Update kubeconfig
+    - aws eks update-kubeconfig --name=${EKS_CLUSTER_NAME} --region=${EKS_REGION}
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > eks-cluster-info.txt
+    - kubectl get pods -A >> eks-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+test:eks:calico:
+  <<: *test_eks_template
+  variables:
+    CNI_PLUGIN: "calico"
+  script:
+    # Create EKS cluster
+    - |
+      eksctl create cluster \
+        --name=${EKS_CLUSTER_NAME} \
+        --region=${EKS_REGION} \
+        --version=${EKS_K8S_VERSION} \
+        --nodegroup-name=standard-workers \
+        --node-type=${EKS_NODE_TYPE} \
+        --nodes=${EKS_NODES} \
+        --nodes-min=2 \
+        --nodes-max=4 \
+        --managed
+
+    # Update kubeconfig
+    - aws eks update-kubeconfig --name=${EKS_CLUSTER_NAME} --region=${EKS_REGION}
+
+    # Install Calico
+    - kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico-vxlan.yaml
+    - kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l k8s-app=calico-node
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > eks-cluster-info.txt
+    - kubectl get pods -A >> eks-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLOUD PROVIDER TESTS - AKS (Azure)
+# ═══════════════════════════════════════════════════════════════════════
+
+.test_aks_template: &test_aks_template
+  stage: test-cloud
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  variables:
+    AKS_CLUSTER_NAME: "np-test-${CI_PIPELINE_ID}-${CNI_PLUGIN}"
+    AKS_RESOURCE_GROUP: "network-policy-tests-rg"
+    AKS_LOCATION: "eastus"
+    AKS_NODE_COUNT: "2"
+    AKS_NODE_SIZE: "Standard_DS2_v2"
+    AKS_K8S_VERSION: "1.28"
+
+  before_script:
+    # Login to Azure
+    - |
+      az login --service-principal \
+        --username ${AZURE_CLIENT_ID} \
+        --password ${AZURE_CLIENT_SECRET} \
+        --tenant ${AZURE_TENANT_ID}
+    - az account set --subscription ${AZURE_SUBSCRIPTION_ID}
+
+    # Create resource group
+    - az group create --name ${AKS_RESOURCE_GROUP} --location ${AKS_LOCATION}
+
+  after_script:
+    # Cleanup AKS cluster and resource group
+    - az aks delete --name ${AKS_CLUSTER_NAME} --resource-group ${AKS_RESOURCE_GROUP} --yes --no-wait || true
+    - az group delete --name ${AKS_RESOURCE_GROUP} --yes --no-wait || true
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/
+      - aks-cluster-info.txt
+    reports:
+      junit: test-framework/junit.xml
+    expire_in: 30 days
+
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+  tags:
+    - docker
+
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$ENV_TYPE == "staging" || $ENV_TYPE == "production"'
+
+test:aks:azure-cni:
+  <<: *test_aks_template
+  variables:
+    CNI_PLUGIN: "azure-cni"
+  script:
+    # Create AKS cluster with Azure CNI
+    - |
+      az aks create \
+        --resource-group ${AKS_RESOURCE_GROUP} \
+        --name ${AKS_CLUSTER_NAME} \
+        --location ${AKS_LOCATION} \
+        --kubernetes-version ${AKS_K8S_VERSION} \
+        --node-count ${AKS_NODE_COUNT} \
+        --node-vm-size ${AKS_NODE_SIZE} \
+        --network-plugin azure \
+        --network-policy azure \
+        --generate-ssh-keys
+
+    # Get credentials
+    - az aks get-credentials --resource-group ${AKS_RESOURCE_GROUP} --name ${AKS_CLUSTER_NAME} --overwrite-existing
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > aks-cluster-info.txt
+    - kubectl get pods -A >> aks-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+test:aks:calico:
+  <<: *test_aks_template
+  variables:
+    CNI_PLUGIN: "calico"
+  script:
+    # Create AKS cluster with Calico
+    - |
+      az aks create \
+        --resource-group ${AKS_RESOURCE_GROUP} \
+        --name ${AKS_CLUSTER_NAME} \
+        --location ${AKS_LOCATION} \
+        --kubernetes-version ${AKS_K8S_VERSION} \
+        --node-count ${AKS_NODE_COUNT} \
+        --node-vm-size ${AKS_NODE_SIZE} \
+        --network-plugin azure \
+        --network-policy calico \
+        --generate-ssh-keys
+
+    # Get credentials
+    - az aks get-credentials --resource-group ${AKS_RESOURCE_GROUP} --name ${AKS_CLUSTER_NAME} --overwrite-existing
+
+    # Capture cluster info
+    - kubectl get nodes -o wide > aks-cluster-info.txt
+    - kubectl get pods -A >> aks-cluster-info.txt
+
+    # Run tests
+    - cd test-framework
+    - ./parallel-test-runner.sh --timeout ${TEST_TIMEOUT}
+    - ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+# ═══════════════════════════════════════════════════════════════════════
+# INTEGRATION TESTS
+# ═══════════════════════════════════════════════════════════════════════
+
+integration-tests:
+  stage: integration
+  image: ${REGISTRY_IMAGE}:${REGISTRY_TAG}
+  dependencies:
+    - build:test-runner-image
+  before_script:
+    - dockerd &
+    - sleep 10
+    - kind create cluster --wait 300s
+  script:
+    - cd test-framework
+    - ./run-integration-tests.sh --verbose
+
+  artifacts:
+    when: always
+    paths:
+      - test-framework/results/integration/
+    expire_in: 30 days
+
+  <<: *global_cache
+
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# REPORTING
+# ═══════════════════════════════════════════════════════════════════════
+
+report:aggregate:
+  stage: report
+  image: alpine:latest
+  dependencies:
+    - test:kind:calico
+    - test:kind:cilium
+    - bats-tests
+  before_script:
+    - apk add --no-cache jq bc python3 py3-pip
+    - pip3 install --break-system-packages jinja2
+  script:
+    # Aggregate all test results
+    - |
+      TOTAL=0
+      PASSED=0
+      FAILED=0
+      TIMEOUT=0
+
+      for result in test-framework/results/**/aggregate-*.json; do
+        if [[ -f "$result" ]]; then
+          T=$(jq -r '.summary.total // 0' "$result")
+          P=$(jq -r '.summary.passed // 0' "$result")
+          F=$(jq -r '.summary.failed // 0' "$result")
+          TO=$(jq -r '.summary.timeout // 0' "$result")
+
+          TOTAL=$((TOTAL + T))
+          PASSED=$((PASSED + P))
+          FAILED=$((FAILED + F))
+          TIMEOUT=$((TIMEOUT + TO))
+        fi
+      done
+
+      PASS_RATE=$(echo "scale=2; $PASSED * 100 / $TOTAL" | bc || echo "0")
+
+      # Create markdown summary
+      cat > test-summary.md <<EOF
+      # Network Policy Test Summary
+
+      ## Pipeline Information
+      - **Pipeline ID**: ${CI_PIPELINE_ID}
+      - **Commit**: ${CI_COMMIT_SHORT_SHA}
+      - **Branch**: ${CI_COMMIT_REF_NAME}
+      - **Date**: $(date -Iseconds)
+      - **Triggered by**: ${CI_PIPELINE_SOURCE}
+
+      ## Overall Results
+      - **Total Tests**: ${TOTAL}
+      - **Passed**: ${PASSED} ✅
+      - **Failed**: ${FAILED} ❌
+      - **Timeout**: ${TIMEOUT} ⏱️
+      - **Pass Rate**: ${PASS_RATE}%
+
+      ## Test Matrix
+      - **CNI Plugins**: Calico, Cilium, Weave
+      - **Providers**: kind, GKE, EKS, AKS
+      - **Kubernetes Versions**: 1.27, 1.28, 1.29, 1.30
+
+      ## Artifacts
+      - [View detailed reports](${CI_PAGES_URL})
+      - [Download test results](${CI_PIPELINE_URL}/artifacts)
+
+      See individual job artifacts for detailed reports.
+      EOF
+
+      cat test-summary.md
+
+      # Create JSON summary for badges
+      cat > test-summary.json <<EOF
+      {
+        "schemaVersion": 1,
+        "label": "tests",
+        "message": "${PASSED}/${TOTAL} passed",
+        "color": "$( [ ${FAILED} -eq 0 ] && echo 'brightgreen' || echo 'red' )",
+        "namedLogo": "kubernetes"
+      }
+      EOF
+
+  artifacts:
+    paths:
+      - test-summary.md
+      - test-summary.json
+    expire_in: 90 days
+
+  tags:
+    - docker
+
+report:coverage:
+  stage: report
+  image: python:3.11-slim
+  dependencies:
+    - test:kind:calico
+    - test:kind:cilium
+    - bats-tests
+  before_script:
+    - pip install coverage pytest-cov
+  script:
+    # Generate coverage reports if available
+    - cd test-framework
+    - |
+      if [ -f .coverage ]; then
+        coverage report
+        coverage html -d coverage-html
+        coverage json -o coverage.json
+
+        # Extract coverage percentage
+        COVERAGE=$(python3 -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered'])")
+
+        # Create badge JSON
+        cat > coverage-badge.json <<EOF
+      {
+        "schemaVersion": 1,
+        "label": "coverage",
+        "message": "${COVERAGE}%",
+        "color": "$( awk -v c=${COVERAGE} 'BEGIN { if (c >= 80) print "brightgreen"; else if (c >= 60) print "yellow"; else print "red" }' )"
+      }
+      EOF
+      fi
+
+  artifacts:
+    paths:
+      - test-framework/coverage-html/
+      - test-framework/coverage.json
+      - test-framework/coverage-badge.json
+    expire_in: 90 days
+
+  allow_failure: true
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# GITLAB PAGES - HTML REPORTS & DASHBOARDS
+# ═══════════════════════════════════════════════════════════════════════
+
+pages:
+  stage: deploy
+  image: alpine:latest
+  dependencies:
+    - test:kind:calico
+    - test:kind:cilium
+    - bats-tests
+    - report:aggregate
+    - report:coverage
+
+  only:
+    - master
+    - main
+
+  before_script:
+    - apk add --no-cache jq bc python3
+
+  script:
+    # Create public directory structure
+    - mkdir -p public/{reports,coverage,assets,badges}
+
+    # Copy HTML reports
+    - cp -r test-framework/results/bats/* public/reports/ 2>/dev/null || true
+    - cp -r test-framework/results/html/* public/reports/ 2>/dev/null || true
+    - cp -r test-framework/coverage-html/* public/coverage/ 2>/dev/null || true
+
+    # Copy badges
+    - cp test-summary.json public/badges/tests.json 2>/dev/null || true
+    - cp test-framework/coverage-badge.json public/badges/coverage.json 2>/dev/null || true
+
+    # Create interactive dashboard
+    - |
+      cat > public/index.html <<'EOF'
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Network Policy Test Dashboard</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+          }
+          .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+          }
+          header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+          }
+          h1 { font-size: 2.5em; margin-bottom: 10px; }
+          .subtitle { opacity: 0.9; font-size: 1.1em; }
+
+          .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 40px;
+            background: #f8f9fa;
+          }
+          .stat-card {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.3s;
+          }
+          .stat-card:hover { transform: translateY(-5px); }
+          .stat-value {
+            font-size: 3em;
+            font-weight: bold;
+            margin: 10px 0;
+          }
+          .stat-label {
+            color: #666;
+            font-size: 1.1em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+          }
+
+          .passed { color: #28a745; }
+          .failed { color: #dc3545; }
+          .total { color: #667eea; }
+          .rate { color: #fd7e14; }
+
+          .content {
+            padding: 40px;
+          }
+
+          .section {
+            margin-bottom: 40px;
+          }
+          .section h2 {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            color: #333;
+            border-bottom: 3px solid #667eea;
+            padding-bottom: 10px;
+          }
+
+          .report-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+          }
+
+          .report-card {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s;
+            cursor: pointer;
+          }
+          .report-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+          }
+          .report-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+          }
+          .report-card p {
+            color: #666;
+            line-height: 1.6;
+          }
+          .report-card a {
+            display: inline-block;
+            margin-top: 15px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+          }
+          .report-card a:hover {
+            text-decoration: underline;
+          }
+
+          .badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+            margin: 5px;
+          }
+          .badge-success { background: #d4edda; color: #155724; }
+          .badge-danger { background: #f8d7da; color: #721c24; }
+          .badge-info { background: #d1ecf1; color: #0c5460; }
+
+          footer {
+            background: #2c3e50;
+            color: white;
+            text-align: center;
+            padding: 30px;
+            margin-top: 40px;
+          }
+
+          .pipeline-info {
+            background: #e9ecef;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+          }
+          .pipeline-info table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          .pipeline-info td {
+            padding: 8px;
+            border-bottom: 1px solid #dee2e6;
+          }
+          .pipeline-info td:first-child {
+            font-weight: 600;
+            width: 150px;
+            color: #495057;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <header>
+            <h1>🔒 Network Policy Test Dashboard</h1>
+            <p class="subtitle">Comprehensive Kubernetes NetworkPolicy Testing & Validation</p>
+          </header>
+
+          <div class="stats" id="stats">
+            <div class="stat-card">
+              <div class="stat-label">Total Tests</div>
+              <div class="stat-value total" id="total-tests">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Passed</div>
+              <div class="stat-value passed" id="passed-tests">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Failed</div>
+              <div class="stat-value failed" id="failed-tests">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Pass Rate</div>
+              <div class="stat-value rate" id="pass-rate">-</div>
+            </div>
+          </div>
+
+          <div class="content">
+            <div class="pipeline-info">
+              <h3 style="margin-bottom: 15px;">Pipeline Information</h3>
+              <table>
+                <tr>
+                  <td>Pipeline ID:</td>
+                  <td id="pipeline-id">-</td>
+                </tr>
+                <tr>
+                  <td>Commit:</td>
+                  <td id="commit">-</td>
+                </tr>
+                <tr>
+                  <td>Branch:</td>
+                  <td id="branch">-</td>
+                </tr>
+                <tr>
+                  <td>Generated:</td>
+                  <td id="generated">-</td>
+                </tr>
+              </table>
+            </div>
+
+            <div class="section">
+              <h2>📊 Test Reports</h2>
+              <div class="report-grid" id="reports">
+                <div class="report-card">
+                  <h3>📁 BATS Unit Tests</h3>
+                  <p>Comprehensive unit testing of network policy recipes using BATS framework</p>
+                  <div>
+                    <span class="badge badge-info">Unit Tests</span>
+                    <span class="badge badge-success">Parallel Execution</span>
+                  </div>
+                  <a href="reports/">View Reports →</a>
+                </div>
+
+                <div class="report-card">
+                  <h3>📈 Code Coverage</h3>
+                  <p>Test coverage analysis and detailed coverage reports</p>
+                  <div>
+                    <span class="badge badge-info">Coverage</span>
+                  </div>
+                  <a href="coverage/">View Coverage →</a>
+                </div>
+
+                <div class="report-card">
+                  <h3>🔧 Integration Tests</h3>
+                  <p>End-to-end integration testing across multiple scenarios</p>
+                  <div>
+                    <span class="badge badge-info">E2E Tests</span>
+                  </div>
+                  <a href="reports/">View Results →</a>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>☸️ Test Matrix</h2>
+              <div class="report-grid">
+                <div class="report-card">
+                  <h3>CNI Plugins</h3>
+                  <p>Calico, Cilium, Weave, Azure CNI, AWS VPC CNI</p>
+                  <span class="badge badge-success">5 Plugins</span>
+                </div>
+
+                <div class="report-card">
+                  <h3>Cloud Providers</h3>
+                  <p>kind (local), GKE, EKS, AKS</p>
+                  <span class="badge badge-success">4 Providers</span>
+                </div>
+
+                <div class="report-card">
+                  <h3>Kubernetes Versions</h3>
+                  <p>1.27.3, 1.28.0, 1.29.0, 1.30.0</p>
+                  <span class="badge badge-success">4 Versions</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="section">
+              <h2>🎯 Recipes Tested</h2>
+              <p style="line-height: 1.8;">
+                NP-01 (Deny all), NP-02 (Limit traffic), NP-02A (Allow all),
+                NP-03 (Deny non-whitelisted), NP-04 (Deny other namespaces),
+                NP-05 (Allow all namespaces), NP-06 (Allow from namespace),
+                NP-07 (Allow from pods), NP-08 (External traffic),
+                NP-09 (Port-specific), NP-10 (Multiple selectors),
+                NP-11 (Deny egress), NP-12 (Deny egress non-whitelisted),
+                NP-14 (Deny external egress)
+              </p>
+            </div>
+          </div>
+
+          <footer>
+            <p>&copy; 2024 Kubernetes Network Policy Recipes</p>
+            <p>Automated testing powered by GitLab CI/CD</p>
+          </footer>
+        </div>
+
+        <script>
+          // Load test summary data
+          fetch('badges/tests.json')
+            .then(r => r.json())
+            .then(data => {
+              const match = data.message.match(/(\d+)\/(\d+)/);
+              if (match) {
+                const passed = parseInt(match[1]);
+                const total = parseInt(match[2]);
+                const failed = total - passed;
+                const rate = ((passed / total) * 100).toFixed(1);
+
+                document.getElementById('total-tests').textContent = total;
+                document.getElementById('passed-tests').textContent = passed;
+                document.getElementById('failed-tests').textContent = failed;
+                document.getElementById('pass-rate').textContent = rate + '%';
+              }
+            })
+            .catch(() => console.log('Test summary not available'));
+
+          // Set pipeline info
+          document.getElementById('generated').textContent = new Date().toLocaleString();
+        </script>
+      </body>
+      </html>
+      EOF
+
+    # Create reports index
+    - |
+      cat > public/reports/index.html <<'EOF'
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Test Reports</title>
+        <style>
+          body { font-family: sans-serif; margin: 40px; background: #f8f9fa; }
+          h1 { color: #333; }
+          .report-list { list-style: none; padding: 0; }
+          .report-list li {
+            margin: 15px 0;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+          }
+          .report-list a {
+            color: #667eea;
+            text-decoration: none;
+            font-size: 1.1em;
+            font-weight: 600;
+          }
+          .report-list a:hover { text-decoration: underline; }
+          .back-link {
+            display: inline-block;
+            margin-bottom: 20px;
+            color: #667eea;
+            text-decoration: none;
+          }
+        </style>
+      </head>
+      <body>
+        <a href="../" class="back-link">← Back to Dashboard</a>
+        <h1>Test Reports</h1>
+        <ul class="report-list" id="report-list"></ul>
+
+        <script>
+          // Dynamically list all report files
+          const reportList = document.getElementById('report-list');
+          fetch('.')
+            .then(r => r.text())
+            .then(html => {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(html, 'text/html');
+              const links = doc.querySelectorAll('a');
+              links.forEach(link => {
+                if (link.href.endsWith('.html') || link.href.endsWith('.xml') || link.href.endsWith('.json')) {
+                  const li = document.createElement('li');
+                  const a = document.createElement('a');
+                  a.href = link.href;
+                  a.textContent = link.textContent;
+                  li.appendChild(a);
+                  reportList.appendChild(li);
+                }
+              });
+            });
+        </script>
+      </body>
+      </html>
+      EOF
+
+    # Generate directory listings for reports
+    - find public/reports -type f -name "*.html" -o -name "*.xml" -o -name "*.json" | head -20
+
+    echo "GitLab Pages deployed to ${CI_PAGES_URL}"
+
+  artifacts:
+    paths:
+      - public
+    expire_in: 90 days
+
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+notify:slack:success:
+  stage: deploy
+  image: curlimages/curl:latest
+  only:
+    - master
+    - main
+  when: on_success
+  script:
+    - |
+      if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"text\": \"✅ Network Policy tests PASSED on $CI_COMMIT_REF_NAME\",
+            \"blocks\": [
+              {
+                \"type\": \"header\",
+                \"text\": {
+                  \"type\": \"plain_text\",
+                  \"text\": \"✅ Pipeline Success\"
+                }
+              },
+              {
+                \"type\": \"section\",
+                \"fields\": [
+                  {\"type\": \"mrkdwn\", \"text\": \"*Branch:*\\n$CI_COMMIT_REF_NAME\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Commit:*\\n$CI_COMMIT_SHORT_SHA\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Pipeline:*\\n<$CI_PIPELINE_URL|#$CI_PIPELINE_ID>\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Reports:*\\n<$CI_PAGES_URL|View Dashboard>\"}
+                ]
+              }
+            ]
+          }" \
+          $SLACK_WEBHOOK_URL
+      fi
+  tags:
+    - docker
+
+notify:slack:failure:
+  stage: deploy
+  image: curlimages/curl:latest
+  only:
+    - master
+    - main
+  when: on_failure
+  script:
+    - |
+      if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{
+            \"text\": \"❌ Network Policy tests FAILED on $CI_COMMIT_REF_NAME\",
+            \"blocks\": [
+              {
+                \"type\": \"header\",
+                \"text\": {
+                  \"type\": \"plain_text\",
+                  \"text\": \"❌ Pipeline Failure\"
+                }
+              },
+              {
+                \"type\": \"section\",
+                \"fields\": [
+                  {\"type\": \"mrkdwn\", \"text\": \"*Branch:*\\n$CI_COMMIT_REF_NAME\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Commit:*\\n$CI_COMMIT_SHORT_SHA\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Pipeline:*\\n<$CI_PIPELINE_URL|#$CI_PIPELINE_ID>\"},
+                  {\"type\": \"mrkdwn\", \"text\": \"*Action:*\\nCheck the logs for details\"}
+                ]
+              }
+            ]
+          }" \
+          $SLACK_WEBHOOK_URL
+      fi
+  tags:
+    - docker
+
+# ═══════════════════════════════════════════════════════════════════════
+# CLEANUP
+# ═══════════════════════════════════════════════════════════════════════
+
+cleanup:namespaces:
+  stage: cleanup
+  image: gcr.io/google.com/cloudsdktool/cloud-sdk:latest
+  when: always
+  before_script:
+    - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    - chmod +x kubectl && mv kubectl /usr/local/bin/
+  script:
+    - |
+      if kubectl get nodes &>/dev/null; then
+        # Delete any leftover test namespaces
+        kubectl delete namespaces -l test-runner=parallel --wait=false || true
+        kubectl delete namespaces -l test-type=network-policy --wait=false || true
+      fi
+  allow_failure: true
+  tags:
+    - docker
+
+cleanup:docker:
+  stage: cleanup
+  image: docker:24
+  services:
+    - docker:24-dind
+  when: always
+  script:
+    # Clean up old Docker images to free space
+    - docker system prune -af --filter "until=72h" || true
+  allow_failure: true
+  tags:
+    - docker
+  only:
+    - schedules
+
+# ═══════════════════════════════════════════════════════════════════════
+# PIPELINE SCHEDULES (Configure in GitLab UI)
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Recommended schedules:
+# 1. Nightly Full Test Run
+#    - Schedule: 0 2 * * * (2 AM daily)
+#    - Variables: ENV_TYPE=staging
+#    - Description: Full test suite across all platforms
+#
+# 2. Weekly Cloud Provider Tests
+#    - Schedule: 0 3 * * 0 (3 AM Sunday)
+#    - Variables: ENV_TYPE=production
+#    - Description: Comprehensive cloud provider testing
+#
+# 3. Container Cleanup
+#    - Schedule: 0 4 * * 1 (4 AM Monday)
+#    - Variables: CLEANUP_ONLY=true
+#    - Description: Clean up old Docker images and caches
+#
+# ═══════════════════════════════════════════════════════════════════════

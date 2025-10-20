@@ -1,0 +1,73 @@
+1..6
+# Test duration: 0s
+not ok 1 06: YAML syntax should be valid in 174ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 2 06: Policy should allow traffic from namespace with specific label in 178ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 06: Policy allows traffic from any pod in allowed namespace in 163ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 06: Multiple namespace labels with matchExpressions in 184ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 06: Policy can allow from multiple specific namespaces (OR logic) in 175ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 6 06: Namespace labels can be added/removed dynamically in 206ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/06-allow-traffic-from-a-namespace.bats, line 14)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

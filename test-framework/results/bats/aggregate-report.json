@@ -1,0 +1,15 @@
+{
+  "test_run": {
+    "timestamp": "2025-10-18T00:21:14-07:00",
+    "parallel_jobs": 4,
+    "timeout": 300
+  },
+  "summary": {
+    "total": 115,
+    "passed": 0,
+    "failed": 115,
+    "timeout": 0,
+    "pass_rate": 0.00
+  },
+  "results_directory": "/home/calelin/dev/kubernetes-network-policy-recipes/test-framework/results/bats"
+}

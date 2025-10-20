@@ -1,0 +1,73 @@
+1..6
+# Test duration: 0s
+not ok 1 07: YAML syntax should be valid in 135ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 2 07: Policy should require BOTH namespace AND pod labels (AND logic) in 139ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 07: Multiple from clauses create OR logic between rules in 119ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 07: Pod selector alone does not match pods from other namespaces in 134ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 07: Complex matchExpressions for both namespace and pod in 123ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 6 07: Same rule can select multiple pods across namespaces in 125ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/07-allow-traffic-from-some-pods-in-another-namespace.bats, line 13)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

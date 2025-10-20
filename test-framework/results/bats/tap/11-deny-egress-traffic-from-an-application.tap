@@ -1,0 +1,109 @@
+1..9
+# Test duration: 0s
+not ok 1 11: YAML syntax should be valid in 93ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 2 11: Policy should deny all egress traffic from target pod in 136ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 11: Egress policy only affects pods with matching labels in 112ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 11: Empty podSelector denies egress from all pods in namespace in 125ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 11: Egress-only policy does not affect ingress in 115ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 6 11: Policy with both Ingress and Egress policyTypes in 131ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 7 11: Egress policy can be verified via kubectl in 109ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 8 11: Egress policy blocks DNS resolution in 125ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 9 11: Combining egress deny with selective allow in 110ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  from function `setup' in test file test-framework/bats-tests/recipes/11-deny-egress-traffic-from-an-application.bats, line 12)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

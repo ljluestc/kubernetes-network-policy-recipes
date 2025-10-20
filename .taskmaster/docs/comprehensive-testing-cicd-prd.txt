@@ -1,0 +1,522 @@
+# Comprehensive Testing, CI/CD, and Pre-Commit Hooks PRD
+
+## Project Overview
+Implement 100% unit test coverage, integration test coverage, complete CI/CD pipelines across all platforms, and pre-commit hooks for the Kubernetes Network Policy Recipes repository.
+
+## Goals
+1. Achieve 100% unit test coverage for all 15 network policy recipes using BATS
+2. Achieve 100% integration test coverage with end-to-end scenarios
+3. Implement complete CI/CD pipelines (GitHub Actions, GitLab CI, Jenkins, Azure Pipelines, CircleCI)
+4. Add comprehensive pre-commit hooks for validation
+5. Implement test coverage reporting and badges
+6. Add performance testing and benchmarking
+7. Create comprehensive test documentation
+
+## Requirements
+
+### 1. BATS Unit Tests for All Recipes (100% Coverage)
+
+#### 1.1 BATS Test Infrastructure Setup
+- Install BATS testing framework (bats-core)
+- Install BATS helper libraries (bats-assert, bats-support, bats-file)
+- Create BATS test directory structure under test-framework/bats/
+- Configure BATS test discovery and execution
+- Set up BATS test utilities and helper functions
+
+#### 1.2 Recipe-Specific BATS Tests
+Create comprehensive BATS unit tests for each recipe:
+
+**Recipe NP-00: Create Cluster**
+- test_cluster_creation.bats
+- Verify cluster creation commands
+- Test provider detection (kind, minikube, GKE, EKS, AKS)
+- Validate NetworkPolicy support
+- Test CNI plugin detection
+
+**Recipe NP-01: Deny All Traffic to Application**
+- test_01_deny_all_traffic.bats
+- Test YAML syntax validation
+- Test policy application
+- Test traffic blocking (ingress)
+- Test traffic blocking (egress) if applicable
+- Verify pod selection with correct labels
+- Test namespace isolation
+- Edge case: empty pod selector
+
+**Recipe NP-02: Limit Traffic to Application**
+- test_02_limit_traffic.bats
+- Test YAML syntax validation
+- Test policy application with specific source selectors
+- Test allowed traffic from whitelisted pods
+- Test blocked traffic from non-whitelisted pods
+- Test multiple policy rules
+- Test port restrictions if specified
+- Edge case: overlapping selectors
+
+**Recipe NP-02A: Allow All Traffic to Application**
+- test_02a_allow_all_traffic.bats
+- Test YAML syntax validation
+- Test policy application
+- Test unrestricted ingress traffic
+- Verify no egress restrictions
+- Test interaction with other policies (additive nature)
+
+**Recipe NP-03: Deny All Non-Whitelisted Traffic in Namespace**
+- test_03_deny_all_non_whitelisted.bats
+- Test default-deny policy creation
+- Test namespace-wide application
+- Test whitelisting specific pods
+- Test traffic within namespace
+- Test traffic from other namespaces (should be blocked)
+- Edge case: DNS traffic handling
+
+**Recipe NP-04: Deny Traffic from Other Namespaces**
+- test_04_deny_other_namespaces.bats
+- Test namespace isolation policy
+- Test intra-namespace communication (should work)
+- Test inter-namespace communication (should block)
+- Test namespace selector edge cases
+- Verify label-based namespace selection
+
+**Recipe NP-05: Allow Traffic from All Namespaces**
+- test_05_allow_all_namespaces.bats
+- Test cross-namespace policy
+- Test traffic from multiple namespaces
+- Verify policy precedence (additive nature)
+- Test interaction with deny policies
+
+**Recipe NP-06: Allow Traffic from Specific Namespace**
+- test_06_allow_from_namespace.bats
+- Test namespace selector configuration
+- Test traffic from allowed namespace
+- Test traffic from non-allowed namespaces (blocked)
+- Test namespace label matching
+- Edge case: namespace label changes
+
+**Recipe NP-07: Allow Traffic from Specific Pods in Another Namespace**
+- test_07_allow_from_pods.bats
+- Test combined namespace and pod selectors
+- Test traffic from correct pods in correct namespace
+- Test traffic from wrong pods in correct namespace (blocked)
+- Test traffic from correct pods in wrong namespace (blocked)
+- Test complex label selectors
+
+**Recipe NP-08: Allow External Traffic**
+- test_08_allow_external.bats
+- Test external IP CIDR configuration
+- Test traffic from allowed external IPs
+- Test traffic from non-allowed external IPs (blocked)
+- Test LoadBalancer/NodePort service integration
+- Test ingress controller compatibility
+
+**Recipe NP-09: Allow Traffic Only to Specific Port**
+- test_09_allow_port.bats
+- Test port-specific policy rules
+- Test traffic to allowed port
+- Test traffic to non-allowed ports (blocked)
+- Test protocol specification (TCP/UDP)
+- Test port ranges if applicable
+- Edge case: port 0 or invalid ports
+
+**Recipe NP-10: Allow Traffic with Multiple Selectors**
+- test_10_multiple_selectors.bats
+- Test complex selector combinations
+- Test OR logic between multiple selectors
+- Test AND logic within single selector
+- Test matchExpressions vs matchLabels
+- Test selector precedence and evaluation order
+
+**Recipe NP-11: Deny Egress Traffic from Application**
+- test_11_deny_egress.bats
+- Test egress blocking policy
+- Test outbound traffic blocking
+- Test DNS traffic (may need whitelisting)
+- Test egress to specific destinations
+- Edge case: Kubernetes API access
+
+**Recipe NP-12: Deny All Non-Whitelisted Egress Traffic from Namespace**
+- test_12_deny_all_egress.bats
+- Test default-deny egress policy
+- Test namespace-wide egress blocking
+- Test whitelisting specific egress destinations
+- Test DNS and Kubernetes API whitelisting
+- Test egress to external services
+
+**Recipe NP-13: Allow Egress Traffic to Specific Pods**
+- test_13_allow_egress_to_pods.bats
+- Test egress pod selector configuration
+- Test egress to allowed destination pods
+- Test egress to non-allowed pods (blocked)
+- Test egress to specific namespaces
+- Test combined pod and namespace selectors
+
+**Recipe NP-14: Deny External Egress Traffic**
+- test_14_deny_external_egress.bats
+- Test external egress blocking
+- Test internal cluster communication (should work)
+- Test external IP blocking
+- Test CIDR-based egress restrictions
+- Test service IP range handling
+
+#### 1.3 BATS Test Utilities
+- Create test helper functions library
+- Implement pod creation and deletion helpers
+- Implement policy application and validation helpers
+- Implement connectivity testing helpers
+- Implement assertion helpers for network policies
+- Implement cleanup helpers for test isolation
+
+#### 1.4 BATS Test Execution and Reporting
+- Create BATS test runner script
+- Implement parallel BATS test execution
+- Generate BATS test reports (TAP format)
+- Convert TAP to JUnit XML for CI integration
+- Generate HTML test reports
+- Implement coverage tracking for BATS tests
+
+### 2. Integration Tests (100% Coverage)
+
+#### 2.1 End-to-End Integration Test Suite
+- Create integration test directory: test-framework/integration/
+- Implement full cluster lifecycle tests
+- Test policy application order and precedence
+- Test policy updates and modifications
+- Test policy deletion and cleanup
+- Test interaction between multiple policies
+
+#### 2.2 Multi-Policy Integration Tests
+- Test combining multiple recipes in single namespace
+- Test policy conflicts and resolution
+- Test additive policy behavior
+- Test default-deny + selective-allow patterns
+- Test complex multi-tier application scenarios
+
+#### 2.3 Real-World Scenario Tests
+- Test microservices architecture patterns
+- Test database access patterns
+- Test frontend-backend-database three-tier
+- Test service mesh integration (optional)
+- Test ingress controller integration
+- Test egress gateway patterns
+
+#### 2.4 Cross-Namespace Integration Tests
+- Test multi-namespace application deployment
+- Test namespace isolation patterns
+- Test controlled cross-namespace communication
+- Test namespace label-based policies
+
+#### 2.5 Performance and Load Integration Tests
+- Test policy performance under load
+- Test large-scale policy application (100+ policies)
+- Test policy enforcement latency
+- Test resource utilization under policy load
+
+### 3. Pre-Commit Hooks Implementation
+
+#### 3.1 Pre-Commit Framework Setup
+- Install pre-commit framework
+- Create .pre-commit-config.yaml
+- Configure pre-commit hook installation
+- Document pre-commit usage
+
+#### 3.2 YAML Validation Hooks
+- Hook: Validate all NetworkPolicy YAML files
+- Hook: Validate Kubernetes API version compatibility
+- Hook: Check YAML syntax and formatting
+- Hook: Validate required fields in policies
+
+#### 3.3 Shell Script Validation Hooks
+- Hook: shellcheck for all .sh files
+- Hook: shfmt for shell script formatting
+- Hook: bash syntax validation
+
+#### 3.4 Markdown and Documentation Hooks
+- Hook: markdownlint for all .md files
+- Hook: Check for broken links in documentation
+- Hook: Validate code blocks in markdown
+- Hook: Check for TODO/FIXME comments
+
+#### 3.5 Security and Best Practice Hooks
+- Hook: Detect hardcoded secrets or credentials
+- Hook: Validate NetworkPolicy best practices
+- Hook: Check for insecure policy configurations
+- Hook: Scan for common security misconfigurations
+
+#### 3.6 Test Coverage Hooks
+- Hook: Ensure BATS tests exist for new recipes
+- Hook: Run quick smoke tests before commit
+- Hook: Check test coverage meets minimum threshold
+- Hook: Validate test naming conventions
+
+#### 3.7 CI/CD Configuration Hooks
+- Hook: Validate GitHub Actions workflow syntax
+- Hook: Validate GitLab CI configuration
+- Hook: Validate Jenkinsfile syntax
+- Hook: Check Azure Pipelines configuration
+
+### 4. Complete CI/CD Pipeline Implementation
+
+#### 4.1 GitHub Actions (Comprehensive)
+- Enhance existing .github/workflows/test.yml
+- Add workflow for BATS test execution
+- Add workflow for integration tests
+- Add workflow for performance benchmarks
+- Add coverage reporting workflow
+- Add badge generation workflow
+- Add automatic PR comments with test results
+- Add scheduled regression testing
+- Add multi-platform testing matrix
+- Add artifact retention and management
+
+#### 4.2 GitLab CI Pipeline
+- Complete .gitlab-ci.yml implementation
+- Add stages: lint, unit-test, integration-test, deploy, report
+- Implement BATS test execution in CI
+- Implement integration test execution
+- Add coverage reporting to GitLab
+- Add pipeline badges
+- Configure artifact handling
+- Add scheduled pipeline runs
+- Configure parallel job execution
+- Add GitLab Container Registry integration
+
+#### 4.3 Jenkins Pipeline
+- Complete Jenkinsfile implementation
+- Create declarative pipeline structure
+- Add stages for all test types
+- Implement parallel test execution
+- Add HTML report publishing
+- Add JUnit test result integration
+- Configure build artifacts
+- Add email notifications
+- Implement pipeline status badges
+- Configure Jenkins shared libraries if needed
+
+#### 4.4 Azure Pipelines
+- Complete azure-pipelines.yml
+- Configure multi-stage pipeline
+- Add test execution stages
+- Configure test result publishing
+- Add code coverage publishing
+- Configure pipeline artifacts
+- Add dashboard widgets
+- Implement parallel job strategies
+- Configure Azure DevOps integration
+- Add release management stages
+
+#### 4.5 CircleCI Pipeline
+- Create .circleci/config.yml
+- Configure workflows for different test types
+- Implement parallel job execution
+- Add test result storage
+- Configure artifacts and caching
+- Add Slack notifications
+- Implement scheduled workflows
+- Add coverage reporting
+- Configure Docker layer caching
+
+#### 4.6 Travis CI Pipeline
+- Create .travis.yml
+- Configure build matrix for different environments
+- Add test execution stages
+- Configure after_success hooks
+- Add coverage reporting integration
+- Configure deploy stages
+- Add build status badges
+
+### 5. Test Coverage Reporting
+
+#### 5.1 Coverage Tool Setup
+- Implement test coverage tracking system
+- Create coverage report aggregation scripts
+- Configure coverage thresholds (target: 100%)
+- Set up coverage reporting for each test type
+
+#### 5.2 Coverage Report Generation
+- Generate coverage reports in multiple formats (HTML, XML, JSON)
+- Create coverage summary dashboard
+- Implement coverage trend tracking
+- Generate diff coverage for PRs
+
+#### 5.3 Coverage Badge Integration
+- Create coverage badges for README
+- Integrate with shields.io or similar
+- Add badges for:
+  - Overall test coverage
+  - BATS test coverage
+  - Integration test coverage
+  - CI pipeline status
+  - Latest release version
+
+#### 5.4 Coverage Enforcement
+- Configure CI to fail if coverage drops below threshold
+- Implement coverage diff checks in PRs
+- Add coverage gate for merging
+- Create coverage regression alerts
+
+### 6. Test Documentation
+
+#### 6.1 Testing Guide Documentation
+- Create TESTING.md with comprehensive testing guide
+- Document how to run all test types locally
+- Document test framework architecture
+- Document test writing guidelines
+- Add troubleshooting section
+
+#### 6.2 CI/CD Documentation
+- Create CICD.md documenting all pipelines
+- Document pipeline configuration for each platform
+- Document how to set up CI secrets and variables
+- Document pipeline troubleshooting
+
+#### 6.3 Pre-Commit Documentation
+- Document pre-commit setup instructions
+- Document available hooks and their purpose
+- Document how to bypass hooks (when appropriate)
+- Document hook customization
+
+#### 6.4 Test Result Documentation
+- Create automated test result summaries
+- Generate test execution history reports
+- Document test failure patterns and resolutions
+- Create test metrics dashboard
+
+### 7. Continuous Quality Improvements
+
+#### 7.1 Automated Dependency Updates
+- Configure Dependabot for GitHub
+- Configure Renovate Bot as alternative
+- Add CI checks for dependency updates
+- Document dependency update process
+
+#### 7.2 Code Quality Tools
+- Integrate shellcheck for scripts
+- Integrate yamllint for YAML files
+- Integrate markdownlint for documentation
+- Add code quality badges
+
+#### 7.3 Security Scanning
+- Integrate security scanning in CI
+- Scan for vulnerabilities in dependencies
+- Scan for insecure configurations
+- Add security scan badges
+
+#### 7.4 Performance Monitoring
+- Track test execution time trends
+- Monitor CI pipeline duration
+- Identify and optimize slow tests
+- Implement performance regression detection
+
+### 8. Test Maintenance and Reliability
+
+#### 8.1 Flaky Test Detection
+- Implement flaky test detection mechanism
+- Create quarantine system for flaky tests
+- Add test retry logic with exponential backoff
+- Document known test limitations
+
+#### 8.2 Test Data Management
+- Create test fixtures for common scenarios
+- Implement test data versioning
+- Add test data validation
+- Document test data requirements
+
+#### 8.3 Test Environment Management
+- Document test environment requirements
+- Create scripts for environment setup
+- Implement environment validation
+- Add environment cleanup automation
+
+## Success Criteria
+
+1. **100% BATS Unit Test Coverage**: Every recipe (00-14) has comprehensive BATS tests
+2. **100% Integration Test Coverage**: All recipe combinations and scenarios tested
+3. **Pre-Commit Hooks Active**: All hooks configured and running successfully
+4. **All CI/CD Pipelines Operational**: GitHub Actions, GitLab CI, Jenkins, Azure Pipelines, CircleCI all working
+5. **Coverage Reports Available**: Real-time coverage reports with badges
+6. **Documentation Complete**: All testing and CI/CD processes documented
+7. **Zero Test Failures**: All tests passing consistently
+8. **Performance Benchmarks Established**: Baseline performance metrics documented
+
+## Implementation Priority
+
+**High Priority:**
+1. BATS unit tests for all recipes (1.1-1.4)
+2. Pre-commit hooks implementation (3.1-3.7)
+3. GitHub Actions enhancement (4.1)
+4. Coverage reporting (5.1-5.4)
+
+**Medium Priority:**
+5. Integration tests (2.1-2.5)
+6. GitLab CI completion (4.2)
+7. Jenkins pipeline completion (4.3)
+8. Azure Pipelines completion (4.4)
+9. CircleCI implementation (4.5)
+
+**Lower Priority:**
+10. Travis CI implementation (4.6)
+11. Test documentation (6.1-6.4)
+12. Continuous quality improvements (7.1-7.4)
+13. Test maintenance systems (8.1-8.3)
+
+## Technical Requirements
+
+### Tools and Dependencies
+- BATS 1.5.0+
+- bats-support
+- bats-assert
+- bats-file
+- kubectl 1.27+
+- kind/minikube for local testing
+- jq for JSON processing
+- yq for YAML processing
+- shellcheck for script validation
+- pre-commit framework
+- parallel for parallel test execution
+
+### CI/CD Platform Requirements
+- GitHub Actions (included with GitHub)
+- GitLab CI/CD (included with GitLab)
+- Jenkins 2.x with Blue Ocean
+- Azure Pipelines (Azure DevOps account)
+- CircleCI (CircleCI account)
+- Docker support for containerized testing
+
+## Timeline Estimation
+
+**Week 1-2: BATS Tests Foundation**
+- Set up BATS infrastructure
+- Implement tests for recipes 00-05
+- Set up basic pre-commit hooks
+
+**Week 2-3: BATS Tests Completion**
+- Implement tests for recipes 06-14
+- Complete BATS test utilities
+- Set up coverage tracking
+
+**Week 3-4: Integration Tests**
+- Implement integration test framework
+- Create end-to-end test scenarios
+- Implement multi-policy tests
+
+**Week 4-5: CI/CD Pipelines**
+- Complete GitHub Actions
+- Complete GitLab CI
+- Complete Jenkins pipeline
+- Complete Azure Pipelines
+- Implement CircleCI
+
+**Week 5-6: Coverage and Documentation**
+- Set up coverage reporting
+- Generate badges
+- Complete all documentation
+- Final testing and validation
+
+## Notes
+
+- All tests must be idempotent and isolated
+- Tests should clean up resources after execution
+- Tests should work across different Kubernetes providers
+- CI/CD pipelines should be efficient and cost-effective
+- Documentation should be beginner-friendly
+- Security should be prioritized in all configurations

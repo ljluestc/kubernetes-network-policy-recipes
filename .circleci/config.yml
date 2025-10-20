@@ -1,0 +1,1037 @@
+version: 2.1
+
+# Orbs for common tasks
+orbs:
+  kubernetes: circleci/kubernetes@1.3.1
+  slack: circleci/slack@4.12.5
+
+# Executors
+executors:
+  ubuntu-docker:
+    machine:
+      image: ubuntu-2204:2023.07.1
+    resource_class: large
+
+  ubuntu-docker-medium:
+    machine:
+      image: ubuntu-2204:2023.07.1
+    resource_class: medium
+
+  ubuntu-docker-xlarge:
+    machine:
+      image: ubuntu-2204:2023.07.1
+    resource_class: xlarge
+
+# Commands
+commands:
+  install-dependencies:
+    description: "Install test dependencies"
+    steps:
+      - run:
+          name: Install dependencies
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y parallel jq bc
+
+            # Install kubectl
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+
+            # Verify installations
+            kubectl version --client
+            parallel --version
+            jq --version
+
+  setup-kind-cluster:
+    description: "Setup kind cluster with specified CNI"
+    parameters:
+      cni:
+        type: string
+        default: "calico"
+      k8s-version:
+        type: string
+        default: "1.28.0"
+      cluster-name:
+        type: string
+        default: "np-test-circleci"
+    steps:
+      - run:
+          name: Install kind
+          command: |
+            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+            chmod +x kind
+            sudo mv kind /usr/local/bin/
+
+      - restore_cache:
+          keys:
+            - kind-images-v1-<< parameters.k8s-version >>
+            - kind-images-v1-
+
+      - run:
+          name: Create kind cluster
+          command: |
+            cd test-framework
+            ./provision-cluster.sh \
+              --provider kind \
+              --name << parameters.cluster-name >> \
+              --cni << parameters.cni >> \
+              --version << parameters.k8s-version >> \
+              --workers 2
+
+      - save_cache:
+          key: kind-images-v1-<< parameters.k8s-version >>
+          paths:
+            - /var/lib/docker
+
+      - run:
+          name: Verify cluster
+          command: |
+            kubectl get nodes
+            kubectl get pods -A
+
+  run-tests:
+    description: "Run network policy tests"
+    parameters:
+      skip-unsupported:
+        type: boolean
+        default: true
+    steps:
+      - run:
+          name: Detect environment
+          command: |
+            cd test-framework
+            ./parallel-test-runner.sh --detect
+
+      - run:
+          name: Run tests
+          no_output_timeout: 20m
+          command: |
+            cd test-framework
+
+            ARGS=""
+            <<# parameters.skip-unsupported >>
+            ARGS="$ARGS --skip-unsupported"
+            <</ parameters.skip-unsupported >>
+
+            ./parallel-test-runner.sh $ARGS
+
+      - run:
+          name: Generate JUnit XML
+          command: |
+            cd test-framework
+            ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+          when: always
+
+  run-integration-tests:
+    description: "Run integration tests"
+    steps:
+      - run:
+          name: Run integration tests
+          no_output_timeout: 30m
+          command: |
+            cd test-framework
+            ./run-integration-tests.sh --verbose
+
+      - run:
+          name: Generate integration test results
+          command: |
+            cd test-framework
+            # Aggregate integration test results
+            if ls results/integration-*.json 1> /dev/null 2>&1; then
+              echo "Integration tests completed"
+            fi
+          when: always
+
+  run-performance-benchmarks:
+    description: "Run performance benchmarks"
+    steps:
+      - run:
+          name: Run performance benchmarks
+          no_output_timeout: 30m
+          command: |
+            cd test-framework
+            ./performance-benchmark.sh --suite baseline --output results
+
+      - run:
+          name: Analyze performance
+          command: |
+            cd test-framework
+            ./analyze-performance.sh results/benchmark-*.json
+          when: always
+
+  cleanup-cluster:
+    description: "Cleanup kind cluster"
+    parameters:
+      cluster-name:
+        type: string
+        default: "np-test-circleci"
+    steps:
+      - run:
+          name: Delete cluster
+          command: |
+            cd test-framework
+            ./provision-cluster.sh --delete --provider kind --name << parameters.cluster-name >> || true
+          when: always
+
+      - run:
+          name: Cleanup namespaces
+          command: |
+            kubectl delete namespaces -l test-runner=parallel --wait=false || true
+          when: always
+
+  run-bats-tests:
+    description: "Run BATS unit tests"
+    steps:
+      - run:
+          name: Run BATS tests
+          command: |
+            cd test-framework
+            ./run-all-bats-tests.sh --output both --verbose
+
+      - run:
+          name: Upload BATS results
+          command: |
+            # Results are automatically stored via store_test_results and store_artifacts
+            echo "BATS tests completed"
+          when: always
+
+  generate-coverage-report:
+    description: "Generate test coverage report"
+    steps:
+      - run:
+          name: Install coverage dependencies
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y jq bc
+
+      - run:
+          name: Generate coverage report
+          command: |
+            cd test-framework
+            source lib/coverage-tracker.sh
+
+            # Generate coverage report
+            generate_coverage_report results/coverage-report.json
+            generate_html_coverage_report results/coverage-report.json results/coverage-report.html
+
+            # Extract metrics
+            OVERALL=$(jq -r '.coverage.overall' results/coverage-report.json)
+            BATS=$(jq -r '.coverage.bats_unit_tests' results/coverage-report.json)
+            INTEGRATION=$(jq -r '.coverage.integration_tests' results/coverage-report.json)
+
+            echo "Overall Coverage: ${OVERALL}%"
+            echo "BATS Coverage: ${BATS}%"
+            echo "Integration Coverage: ${INTEGRATION}%"
+
+      - run:
+          name: Generate badges
+          command: |
+            cd test-framework
+            source lib/badge-generator.sh
+            generate_all_badges results/coverage-report.json badges
+          when: always
+
+# Jobs
+jobs:
+  # Pre-commit checks
+  pre-commit:
+    executor: ubuntu-docker-medium
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+            - pre-commit-v1-{{ checksum ".pre-commit-config.yaml" }}
+            - pre-commit-v1-
+
+      - run:
+          name: Install pre-commit
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y python3 python3-pip
+            pip3 install pre-commit
+
+      - run:
+          name: Run pre-commit
+          command: |
+            pre-commit run --all-files --show-diff-on-failure
+
+      - save_cache:
+          key: pre-commit-v1-{{ checksum ".pre-commit-config.yaml" }}
+          paths:
+            - ~/.cache/pre-commit
+
+  # BATS unit tests
+  bats-tests:
+    executor: ubuntu-docker
+    parallelism: 3
+    steps:
+      - checkout
+      - install-dependencies
+
+      - run:
+          name: Setup test matrix
+          command: |
+            case $CIRCLE_NODE_INDEX in
+              0) echo "1.27.3" > /tmp/k8s-version ;;
+              1) echo "1.28.0" > /tmp/k8s-version ;;
+              2) echo "1.29.0" > /tmp/k8s-version ;;
+            esac
+
+      - run:
+          name: Install kind and create cluster
+          command: |
+            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+            chmod +x kind
+            sudo mv kind /usr/local/bin/
+
+            K8S_VERSION=$(cat /tmp/k8s-version)
+            kind create cluster --image kindest/node:v${K8S_VERSION} --wait 300s
+
+      - run-bats-tests
+
+      - store_test_results:
+          path: test-framework/results/bats/junit
+
+      - store_artifacts:
+          path: test-framework/results/bats
+          destination: bats-results
+
+      - run:
+          name: Cleanup
+          command: |
+            kind delete cluster || true
+          when: always
+
+  # Test on kind with Calico
+  test-kind-calico:
+    executor: ubuntu-docker
+    environment:
+      CNI: calico
+      K8S_VERSION: "1.28.0"
+    steps:
+      - checkout
+      - install-dependencies
+      - setup-kind-cluster:
+          cni: calico
+          k8s-version: "1.28.0"
+          cluster-name: "np-test-calico"
+      - run-tests:
+          skip-unsupported: true
+
+      - store_test_results:
+          path: test-framework/junit.xml
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: test-results-kind-calico
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - aggregate-*.json
+            - html/*.html
+
+      - cleanup-cluster:
+          cluster-name: "np-test-calico"
+
+  # Test on kind with Cilium
+  test-kind-cilium:
+    executor: ubuntu-docker
+    environment:
+      CNI: cilium
+      K8S_VERSION: "1.28.0"
+    steps:
+      - checkout
+      - install-dependencies
+      - setup-kind-cluster:
+          cni: cilium
+          k8s-version: "1.28.0"
+          cluster-name: "np-test-cilium"
+      - run-tests:
+          skip-unsupported: true
+
+      - store_test_results:
+          path: test-framework/junit.xml
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: test-results-kind-cilium
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - aggregate-*.json
+            - html/*.html
+
+      - cleanup-cluster:
+          cluster-name: "np-test-cilium"
+
+  # Integration tests
+  integration-tests:
+    executor: ubuntu-docker-xlarge
+    environment:
+      CNI: calico
+      K8S_VERSION: "1.28.0"
+    steps:
+      - checkout
+      - install-dependencies
+      - setup-kind-cluster:
+          cni: calico
+          k8s-version: "1.28.0"
+          cluster-name: "np-test-integration"
+      - run-integration-tests
+
+      - store_test_results:
+          path: test-framework/results/integration-tests
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: integration-test-results
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - integration-*.json
+
+      - cleanup-cluster:
+          cluster-name: "np-test-integration"
+
+  # Performance benchmarks
+  performance-benchmarks:
+    executor: ubuntu-docker-xlarge
+    environment:
+      CNI: calico
+      K8S_VERSION: "1.28.0"
+    steps:
+      - checkout
+      - install-dependencies
+      - setup-kind-cluster:
+          cni: calico
+          k8s-version: "1.28.0"
+          cluster-name: "np-test-perf"
+      - run-performance-benchmarks
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: performance-results
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - benchmark-*.json
+            - performance-*.html
+
+      - cleanup-cluster:
+          cluster-name: "np-test-perf"
+
+  # Test with multiple k8s versions
+  test-k8s-versions:
+    executor: ubuntu-docker
+    parallelism: 3
+    environment:
+      CNI: calico
+    steps:
+      - checkout
+      - install-dependencies
+
+      - run:
+          name: Setup test matrix
+          command: |
+            case $CIRCLE_NODE_INDEX in
+              0) echo "1.27.3" > /tmp/k8s-version ;;
+              1) echo "1.28.0" > /tmp/k8s-version ;;
+              2) echo "1.29.0" > /tmp/k8s-version ;;
+            esac
+
+      - run:
+          name: Setup cluster with matrix version
+          command: |
+            K8S_VERSION=$(cat /tmp/k8s-version)
+
+            # Install kind
+            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+            chmod +x kind
+            sudo mv kind /usr/local/bin/
+
+            cd test-framework
+            ./provision-cluster.sh \
+              --provider kind \
+              --name np-test-circleci-${CIRCLE_NODE_INDEX} \
+              --cni ${CNI} \
+              --version ${K8S_VERSION} \
+              --workers 2
+
+      - run-tests:
+          skip-unsupported: true
+
+      - store_test_results:
+          path: test-framework/junit.xml
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: test-results-k8s-versions
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - aggregate-*.json
+
+      - run:
+          name: Cleanup
+          command: |
+            cd test-framework
+            ./provision-cluster.sh --delete --provider kind --name np-test-circleci-${CIRCLE_NODE_INDEX} || true
+          when: always
+
+  # Multi-platform: Minikube tests
+  test-minikube:
+    executor: ubuntu-docker
+    environment:
+      CNI: calico
+      K8S_VERSION: "1.28.0"
+    steps:
+      - checkout
+      - install-dependencies
+
+      - run:
+          name: Install minikube
+          command: |
+            curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+            chmod +x minikube-linux-amd64
+            sudo mv minikube-linux-amd64 /usr/local/bin/minikube
+            minikube version
+
+      - run:
+          name: Start minikube cluster
+          command: |
+            cd test-framework
+            ./provision-cluster.sh \
+              --provider minikube \
+              --name np-test-minikube \
+              --cni ${CNI}
+
+      - run:
+          name: Verify cluster
+          command: |
+            kubectl get nodes
+            kubectl get pods -A
+
+      - run-tests:
+          skip-unsupported: true
+
+      - store_test_results:
+          path: test-framework/junit.xml
+
+      - store_artifacts:
+          path: test-framework/results
+          destination: test-results-minikube
+
+      - run:
+          name: Cleanup
+          command: |
+            cd test-framework
+            ./provision-cluster.sh --delete --provider minikube --name np-test-minikube || true
+          when: always
+
+  # Generate coverage report
+  coverage-report:
+    executor: ubuntu-docker-medium
+    steps:
+      - checkout
+      - install-dependencies
+
+      - attach_workspace:
+          at: /tmp/workspace
+
+      - run:
+          name: Copy workspace results
+          command: |
+            mkdir -p test-framework/results
+            cp -r /tmp/workspace/* test-framework/results/ || true
+
+      - generate-coverage-report
+
+      - store_artifacts:
+          path: test-framework/results/coverage-report.json
+          destination: coverage-report.json
+
+      - store_artifacts:
+          path: test-framework/results/coverage-report.html
+          destination: coverage-report.html
+
+      - store_artifacts:
+          path: test-framework/badges
+          destination: badges
+
+      - persist_to_workspace:
+          root: test-framework/results
+          paths:
+            - coverage-report.json
+            - coverage-report.html
+
+      - run:
+          name: Enforce coverage threshold
+          command: |
+            cd test-framework
+            source lib/coverage-enforcer.sh
+            OVERALL=$(jq -r '.coverage.overall' results/coverage-report.json)
+            enforce_coverage_threshold "$OVERALL" 95
+
+  # Generate test summary
+  generate-summary:
+    executor: ubuntu-docker-medium
+    steps:
+      - checkout
+      - install-dependencies
+
+      - attach_workspace:
+          at: /tmp/workspace
+
+      - run:
+          name: Copy workspace results
+          command: |
+            mkdir -p test-framework/results
+            cp -r /tmp/workspace/* test-framework/results/ || true
+
+      - run:
+          name: Aggregate results
+          command: |
+            cd test-framework
+
+            # Find latest result
+            LATEST_RESULT=$(ls -t results/aggregate-*.json 2>/dev/null | head -1)
+
+            if [[ -n "$LATEST_RESULT" ]]; then
+              TOTAL=$(jq -r '.summary.total' "$LATEST_RESULT")
+              PASSED=$(jq -r '.summary.passed' "$LATEST_RESULT")
+              FAILED=$(jq -r '.summary.failed' "$LATEST_RESULT")
+              TIMEOUT=$(jq -r '.summary.timeout' "$LATEST_RESULT")
+              PASS_RATE=$(jq -r '.summary.pass_rate' "$LATEST_RESULT")
+
+              # Extract coverage if available
+              COVERAGE_REPORT="results/coverage-report.json"
+              if [[ -f "$COVERAGE_REPORT" ]]; then
+                OVERALL_COV=$(jq -r '.coverage.overall' "$COVERAGE_REPORT")
+                BATS_COV=$(jq -r '.coverage.bats_unit_tests' "$COVERAGE_REPORT")
+                INT_COV=$(jq -r '.coverage.integration_tests' "$COVERAGE_REPORT")
+              else
+                OVERALL_COV="N/A"
+                BATS_COV="N/A"
+                INT_COV="N/A"
+              fi
+
+              # Create summary
+              cat > summary.txt <<EOF
+Network Policy Test Summary
+============================
+
+Test Execution Results
+-----------------------
+Total Tests:    $TOTAL
+Passed:         $PASSED
+Failed:         $FAILED
+Timeout:        $TIMEOUT
+Pass Rate:      ${PASS_RATE}%
+
+Test Coverage
+-------------
+Overall:        ${OVERALL_COV}%
+BATS:           ${BATS_COV}%
+Integration:    ${INT_COV}%
+
+Build: ${CIRCLE_BUILD_URL}
+Branch: ${CIRCLE_BRANCH}
+Commit: ${CIRCLE_SHA1:0:8}
+EOF
+
+              cat summary.txt
+
+              # Generate badge
+              ./lib/ci-helpers.sh badge results/aggregate-*.json badge.json || true
+            else
+              echo "No test results found"
+            fi
+
+      - store_artifacts:
+          path: test-framework/summary.txt
+          destination: summary.txt
+
+      - store_artifacts:
+          path: test-framework/badge.json
+          destination: badge.json
+
+  # Deploy reports (on master/main only)
+  deploy-reports:
+    executor: ubuntu-docker-medium
+    steps:
+      - checkout
+
+      - attach_workspace:
+          at: /tmp/workspace
+
+      - run:
+          name: Prepare reports for deployment
+          command: |
+            mkdir -p public/reports
+            mkdir -p public/coverage
+
+            # Copy HTML reports
+            cp /tmp/workspace/html/*.html public/reports/ 2>/dev/null || true
+
+            # Copy coverage reports
+            cp /tmp/workspace/coverage-report.html public/coverage/index.html 2>/dev/null || true
+            cp /tmp/workspace/coverage-report.json public/coverage/coverage.json 2>/dev/null || true
+
+            # Create index
+            cat > public/index.html <<'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Network Policy Test Reports</title>
+  <style>
+    body { font-family: sans-serif; margin: 40px; background: #f5f5f5; }
+    h1 { color: #333; }
+    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .report-list { list-style: none; padding: 0; }
+    .report-list li { margin: 15px 0; padding: 15px; background: #f9f9f9; border-radius: 4px; }
+    .report-list a { color: #0066cc; text-decoration: none; font-weight: 500; }
+    .report-list a:hover { text-decoration: underline; }
+    .section { margin: 30px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🧪 Network Policy Test Reports</h1>
+
+    <div class="section">
+      <h2>📊 Coverage Reports</h2>
+      <ul class="report-list">
+        <li><a href="coverage/index.html">Test Coverage Report</a></li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>📝 Test Results</h2>
+      <ul class="report-list">
+        <li><a href="reports/">Test Execution Reports</a></li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <p><small>Generated by CircleCI on ${CIRCLE_BUILD_URL}</small></p>
+    </div>
+  </div>
+</body>
+</html>
+EOF
+
+            ls -la public/
+
+      - store_artifacts:
+          path: public
+          destination: reports
+
+      - run:
+          name: Upload to storage (placeholder)
+          command: |
+            # This is a placeholder for uploading to S3, GCS, or similar
+            # Uncomment and configure based on your storage solution
+
+            # Example for S3:
+            # aws s3 sync public/ s3://your-bucket/circleci-reports/${CIRCLE_BRANCH}/ --delete
+
+            # Example for GCS:
+            # gsutil -m rsync -r -d public/ gs://your-bucket/circleci-reports/${CIRCLE_BRANCH}/
+
+            echo "Report deployment would happen here"
+            echo "Configure your storage backend in this step"
+
+  # Notify on Slack
+  notify-slack:
+    executor: ubuntu-docker-medium
+    steps:
+      - slack/notify:
+          event: fail
+          custom: |
+            {
+              "text": "❌ Network Policy tests failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "❌ *Network Policy Tests Failed*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${CIRCLE_BRANCH}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Build:*\n<${CIRCLE_BUILD_URL}|${CIRCLE_BUILD_NUM}>"
+                    }
+                  ]
+                }
+              ]
+            }
+
+  # Success notification
+  notify-success:
+    executor: ubuntu-docker-medium
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+
+      - run:
+          name: Prepare success message
+          command: |
+            # Extract summary info
+            LATEST_RESULT=$(find /tmp/workspace -name "aggregate-*.json" | sort | tail -1)
+
+            if [[ -f "$LATEST_RESULT" ]]; then
+              TOTAL=$(jq -r '.summary.total' "$LATEST_RESULT")
+              PASSED=$(jq -r '.summary.passed' "$LATEST_RESULT")
+              PASS_RATE=$(jq -r '.summary.pass_rate' "$LATEST_RESULT")
+
+              echo "Tests: $TOTAL | Passed: $PASSED | Rate: ${PASS_RATE}%"
+            fi
+
+      - slack/notify:
+          event: pass
+          custom: |
+            {
+              "text": "✅ Network Policy tests passed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "✅ *Network Policy Tests Passed*"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${CIRCLE_BRANCH}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Build:*\n<${CIRCLE_BUILD_URL}|${CIRCLE_BUILD_NUM}>"
+                    }
+                  ]
+                }
+              ]
+            }
+
+# Workflows
+workflows:
+  version: 2
+
+  # Main test workflow (runs on all branches)
+  test:
+    jobs:
+      - pre-commit:
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - bats-tests:
+          requires:
+            - pre-commit
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - test-kind-calico:
+          requires:
+            - bats-tests
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - test-kind-cilium:
+          requires:
+            - bats-tests
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - integration-tests:
+          requires:
+            - bats-tests
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - coverage-report:
+          requires:
+            - test-kind-calico
+            - test-kind-cilium
+            - integration-tests
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - generate-summary:
+          requires:
+            - coverage-report
+          filters:
+            branches:
+              ignore:
+                - gh-pages
+
+      - deploy-reports:
+          requires:
+            - generate-summary
+          filters:
+            branches:
+              only:
+                - master
+                - main
+
+      - notify-slack:
+          context: slack-secrets
+          requires:
+            - coverage-report
+          filters:
+            branches:
+              only:
+                - master
+                - main
+
+      - notify-success:
+          context: slack-secrets
+          requires:
+            - generate-summary
+          filters:
+            branches:
+              only:
+                - master
+                - main
+
+  # Nightly comprehensive tests with performance benchmarks
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 2 * * *"
+          filters:
+            branches:
+              only:
+                - master
+                - main
+    jobs:
+      - bats-tests
+
+      - test-kind-calico:
+          requires:
+            - bats-tests
+
+      - test-kind-cilium:
+          requires:
+            - bats-tests
+
+      - test-k8s-versions:
+          requires:
+            - bats-tests
+
+      - test-minikube:
+          requires:
+            - bats-tests
+
+      - integration-tests:
+          requires:
+            - bats-tests
+
+      - performance-benchmarks:
+          requires:
+            - bats-tests
+
+      - coverage-report:
+          requires:
+            - test-kind-calico
+            - test-kind-cilium
+            - test-k8s-versions
+            - test-minikube
+            - integration-tests
+
+      - generate-summary:
+          requires:
+            - coverage-report
+            - performance-benchmarks
+
+      - deploy-reports:
+          requires:
+            - generate-summary
+
+      - notify-slack:
+          context: slack-secrets
+          requires:
+            - generate-summary
+
+      - notify-success:
+          context: slack-secrets
+          requires:
+            - generate-summary
+
+  # Weekly extended tests (runs Saturday at 3 AM)
+  weekly:
+    triggers:
+      - schedule:
+          cron: "0 3 * * 6"
+          filters:
+            branches:
+              only:
+                - master
+                - main
+    jobs:
+      - bats-tests
+      - test-kind-calico:
+          requires:
+            - bats-tests
+      - test-kind-cilium:
+          requires:
+            - bats-tests
+      - test-k8s-versions:
+          requires:
+            - bats-tests
+      - test-minikube:
+          requires:
+            - bats-tests
+      - integration-tests:
+          requires:
+            - bats-tests
+      - performance-benchmarks:
+          requires:
+            - bats-tests
+      - coverage-report:
+          requires:
+            - test-kind-calico
+            - test-kind-cilium
+            - test-k8s-versions
+            - test-minikube
+            - integration-tests
+      - generate-summary:
+          requires:
+            - coverage-report
+            - performance-benchmarks
+      - deploy-reports:
+          requires:
+            - generate-summary
+      - notify-slack:
+          context: slack-secrets
+          requires:
+            - generate-summary

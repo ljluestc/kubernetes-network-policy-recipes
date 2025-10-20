@@ -1,0 +1,52 @@
+# Code Coverage Configuration
+# For kcov and test coverage reporting
+
+[coverage]
+# Minimum coverage thresholds
+minimum_overall = 95.0
+minimum_bash_scripts = 95.0
+minimum_unit_tests = 100.0
+minimum_integration_tests = 100.0
+target = 100.0
+
+# Coverage enforcement
+fail_under = 95.0
+enforce_on_pr = true
+enforce_on_merge = true
+
+# Paths to include in coverage
+include_paths = test-framework/**/*.sh
+
+# Paths to exclude from coverage
+exclude_paths =
+    test-framework/bats-libs/**
+    test-framework/results/**
+    **/node_modules/**
+    **/.git/**
+    /usr/**
+    /tmp/**
+
+# Reporting
+report_formats = html,json,text,cobertura
+
+# HTML report settings
+html_output_dir = test-framework/results/kcov/merged
+html_title = "Kubernetes Network Policy Recipes - Code Coverage Report"
+
+# JSON output
+json_output_file = test-framework/results/kcov/coverage.json
+
+# Badge generation
+generate_badges = true
+badge_output_dir = badges
+
+# Coverage regression settings
+allow_regression = false
+regression_threshold = 1.0  # Allow max 1% drop
+
+# Component-specific thresholds
+[component_thresholds]
+lib_scripts = 95.0
+test_scripts = 90.0
+integration_tests = 100.0
+bats_tests = 100.0

@@ -1,21 +1,68 @@
-# ALLOW all traffic to an application
+---
+id: NP-02A
+title: Allow All Traffic to an Application
+type: policy
+category: basics
+priority: medium
+status: ready
+estimated_time: 10m
+dependencies: [NP-00, NP-01]
+tags: [network-policy, allow-all, ingress, override, permissive]
+---
 
-**Use Case:** After applying a
-[deny-all](01-deny-all-traffic-to-an-application.md) policy which blocks all
-non-whitelisted traffic to the application, now you have to allow access to an
-application from all pods in the current namespace.
+## Overview
 
-Applying this policy makes any other policies restricting the traffic to the pod
-void, and allow all traffic to it from its namespace and other namespaces.
+Create a NetworkPolicy that explicitly allows all traffic to an application, overriding any restrictive policies and enabling access from all pods in all namespaces.
 
-## Example
+## Objectives
 
-Start a `web` application:
+- Override deny-all policies with an explicit allow-all rule
+- Enable unrestricted access to an application from all namespaces
+- Understand how NetworkPolicy rules combine additively
+- Demonstrate policy precedence and override behavior
 
-    kubectl run web --image=nginx --labels="app=web" --expose --port=80
+## Background
 
-Save the following manifest to `web-allow-all.yaml`:
+After applying a [deny-all](01-deny-all-traffic-to-an-application.md) policy that blocks all non-whitelisted traffic to an application, this policy allows access from all pods in the current namespace and other namespaces.
 
+**Important:** Applying this policy makes any other policies restricting traffic to the pod void, allowing all traffic from any namespace. NetworkPolicies are additive - if at least one policy allows traffic, it will flow regardless of other blocking policies.
+
+**Use Cases:**
+- Temporarily open access to a service for debugging
+- Override restrictive policies for shared services
+- Create exceptions for common infrastructure components
+- Explicitly document that a service should be accessible from anywhere
+
+## Requirements
+
+### Task 1: Deploy Test Application
+**Priority:** High
+**Status:** pending
+
+Start a web application to demonstrate the policy.
+
+**Actions:**
+- Deploy nginx pod with label `app=web`
+- Expose service on port 80
+- Verify pod is running
+
+**Command:**
+```bash
+kubectl run web --image=nginx --labels="app=web" --expose --port=80
+```
+
+### Task 2: Create and Apply Allow-All Policy
+**Priority:** High
+**Status:** pending
+
+Create NetworkPolicy manifest that allows all traffic.
+
+**Actions:**
+- Create `web-allow-all.yaml` manifest
+- Configure empty ingress rule to allow all traffic
+- Apply policy to cluster
+
+**Manifest:** `web-allow-all.yaml`
 ```yaml
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
@@ -30,42 +77,156 @@ spec:
   - {}
 ```
 
-A few remarks about this manifest:
+**Key Points:**
+- `namespace: default` deploys this policy to the `default` namespace
+- `podSelector` applies the ingress rule to pods with `app: web` label
+- Empty ingress rule `{}` allows traffic from all pods in all namespaces
+- Equivalent to explicitly specifying:
+  ```yaml
+  - from:
+    - podSelector: {}
+      namespaceSelector: {}
+  ```
 
-- `namespace: default` deploy this policy to the `default` namespace.
-- `podSelector` applies the ingress rule to pods with `app: web`
-- Only one ingress rule is specified, and **it is empty**.
-  - Empty ingress rule (`{}`) allows traffic from all pods in the current
-    namespace, as well as other namespaces. It corresponds to:
-
-        - from:
-          - podSelector: {}
-            namespaceSelector: {}
-
-Now apply it to the cluster:
-
-```sh
-$ kubectl apply -f web-allow-all.yaml
-networkpolicy "web-allow-all" created"
+**Command:**
+```bash
+kubectl apply -f web-allow-all.yaml
 ```
 
-Also apply the [`web-deny-all`
-policy](01-deny-all-traffic-to-an-application.md). This way you can validate
-that applying `web-allow-all` will make the `web-deny-all` void.
+**Expected Output:**
+```
+networkpolicy "web-allow-all" created
+```
 
-### Try it out
+### Task 3: Test with Deny-All Policy (Optional)
+**Priority:** Medium
+**Status:** pending
 
-    $ kubectl run test-$RANDOM --rm -i -t --image=alpine -- sh
-    / # wget -qO- --timeout=2 http://web
-    <!DOCTYPE html>
-    <html><head>
-    ...
+Optionally apply the [`web-deny-all` policy](01-deny-all-traffic-to-an-application.md) to validate that `web-allow-all` overrides it.
 
-Traffic is allowed.
+**Actions:**
+- Apply web-deny-all policy
+- Verify web-allow-all takes precedence
+- Traffic should still be allowed
 
-### Cleanup
+**Command:**
+```bash
+kubectl apply -f web-deny-all.yaml
+```
 
-```sh
+### Task 4: Verify Traffic is Allowed
+**Priority:** High
+**Status:** pending
+
+Test that traffic flows freely to the application.
+
+**Actions:**
+- Run temporary test pod
+- Make HTTP request to web service
+- Confirm successful response
+
+**Command:**
+```bash
+kubectl run test-$RANDOM --rm -i -t --image=alpine -- sh
+# Inside the pod:
+wget -qO- --timeout=2 http://web
+```
+
+**Expected Result:**
+```html
+<!DOCTYPE html>
+<html><head>
+...
+```
+
+Traffic is allowed!
+
+## Acceptance Criteria
+
+- [ ] Web pod deployed with label `app=web`
+- [ ] Service exposed on port 80
+- [ ] NetworkPolicy `web-allow-all` created successfully
+- [ ] Policy targets pods with `app=web` label
+- [ ] Empty ingress rule configured correctly
+- [ ] Traffic from any pod in any namespace is allowed
+- [ ] Policy overrides any existing deny policies
+- [ ] HTTP requests succeed from test pods
+
+## Technical Specifications
+
+**NetworkPolicy Configuration:**
+- Name: `web-allow-all`
+- API Version: `networking.k8s.io/v1`
+- Namespace: `default`
+- Pod Selector: `app=web`
+- Ingress Rules: Empty rule `{}`
+
+**How It Works:**
+- Empty ingress rule `{}` matches all sources
+- Allows traffic from all pods in current namespace
+- Allows traffic from all pods in all other namespaces
+- NetworkPolicies are additive - allow rules take precedence
+- If any policy allows traffic, it flows regardless of deny policies
+
+**Policy Precedence:**
+- NetworkPolicies combine additively (union of all rules)
+- An allow rule in any policy enables the traffic
+- Cannot create explicit "deny" rules
+- Default behavior without policies: allow all
+- Default behavior with policies: deny all except allowed
+
+## Implementation Details
+
+The empty ingress rule is the key to this policy:
+
+```yaml
+ingress:
+- {}
+```
+
+This is equivalent to:
+```yaml
+ingress:
+- from:
+  - podSelector: {}
+    namespaceSelector: {}
+```
+
+Both forms select all pods from all namespaces, but the empty form `{}` is more concise.
+
+## Verification
+
+Check policy status:
+```bash
+kubectl get networkpolicy
+kubectl describe networkpolicy web-allow-all
+```
+
+Test from different namespaces:
+```bash
+kubectl create namespace test-ns
+kubectl run test-$RANDOM --namespace=test-ns --rm -i -t --image=alpine -- sh
+# wget -qO- http://web.default
+```
+
+## Cleanup
+
+### Task: Remove Resources
+Remove all created resources:
+
+```bash
 kubectl delete pod,service web
 kubectl delete networkpolicy web-allow-all web-deny-all
 ```
+
+## References
+
+- [Kubernetes NetworkPolicy Documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+- [NetworkPolicy Deny-All Pattern](01-deny-all-traffic-to-an-application.md)
+- [Network Policy Best Practices](https://kubernetes.io/docs/concepts/services-networking/network-policies/#default-policies)
+
+## Notes
+
+Use this policy carefully in production environments. While it can be useful for shared services or debugging, it effectively disables network segmentation for the target application. Consider whether a more restrictive policy with explicit namespace or pod selectors would be more appropriate.
+
+This pattern demonstrates the additive nature of NetworkPolicies - once any policy allows traffic, that traffic will flow regardless of other policies.

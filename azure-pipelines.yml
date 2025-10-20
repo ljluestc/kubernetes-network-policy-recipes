@@ -1,0 +1,493 @@
+# Azure Pipelines for Network Policy Tests
+
+trigger:
+  branches:
+    include:
+      - master
+      - main
+      - develop
+  paths:
+    include:
+      - test-framework/**
+      - '*.md'
+    exclude:
+      - README.md
+      - docs/**
+
+pr:
+  branches:
+    include:
+      - master
+      - main
+  paths:
+    include:
+      - test-framework/**
+      - '*.md'
+
+schedules:
+  - cron: "0 2 * * *"
+    displayName: Nightly test run
+    branches:
+      include:
+        - master
+        - main
+    always: true
+
+variables:
+  RESULTS_DIR: 'test-framework/results'
+  KUBECONFIG: '$(System.DefaultWorkingDirectory)/.kubeconfig'
+
+stages:
+  - stage: PreCommit
+    displayName: 'Pre-commit Checks'
+    jobs:
+      - job: PreCommitHooks
+        displayName: 'Run pre-commit hooks'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: UsePythonVersion@0
+            displayName: 'Set up Python'
+            inputs:
+              versionSpec: '3.11'
+              addToPath: true
+
+          - task: Bash@3
+            displayName: 'Install pre-commit'
+            inputs:
+              targetType: 'inline'
+              script: |
+                pip install pre-commit
+
+          - task: Cache@2
+            displayName: 'Cache pre-commit'
+            inputs:
+              key: 'pre-commit | "$(Agent.OS)" | .pre-commit-config.yaml'
+              path: '$(HOME)/.cache/pre-commit'
+              restoreKeys: |
+                pre-commit | "$(Agent.OS)"
+
+          - task: Bash@3
+            displayName: 'Run pre-commit'
+            inputs:
+              targetType: 'inline'
+              script: |
+                pre-commit run --all-files --show-diff-on-failure
+
+  - stage: BATSTests
+    displayName: 'BATS Unit Tests'
+    dependsOn: PreCommit
+    jobs:
+      - job: BATSTests
+        displayName: 'Run BATS Tests'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          matrix:
+            k8s_1_27:
+              k8sVersion: '1.27.3'
+            k8s_1_28:
+              k8sVersion: '1.28.0'
+            k8s_1_29:
+              k8sVersion: '1.29.0'
+
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: 'Install dependencies'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Install dependencies
+                sudo apt-get update
+                sudo apt-get install -y parallel jq bc
+
+                # Install kubectl
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/
+
+                # Install kind
+                curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+                chmod +x kind
+                sudo mv kind /usr/local/bin/
+
+                # Verify installations
+                kubectl version --client
+                kind --version
+                parallel --version
+                jq --version
+
+          - task: Bash@3
+            displayName: 'Create kind cluster'
+            inputs:
+              targetType: 'inline'
+              script: |
+                kind create cluster --image kindest/node:v$(k8sVersion) --wait 300s
+
+          - task: Bash@3
+            displayName: 'Run BATS tests'
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./run-all-bats-tests.sh --output both --verbose
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-framework/results/bats/junit/*.xml'
+              testRunTitle: 'BATS Tests (k8s $(k8sVersion))'
+              failTaskOnFailedTests: true
+
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              pathToPublish: 'test-framework/results/bats'
+              artifactName: 'bats-results-$(k8sVersion)'
+
+          - task: Bash@3
+            displayName: 'Cleanup cluster'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                kind delete cluster || true
+
+  - stage: Test
+    displayName: 'Run Network Policy Tests'
+    dependsOn: BATSTests
+    jobs:
+      # Test on kind with Calico
+      - job: TestKindCalico
+        displayName: 'Test on kind with Calico'
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+          CNI: 'calico'
+          K8S_VERSION: '1.28.0'
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: 'Install dependencies'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Install kubectl
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/
+
+                # Install dependencies
+                sudo apt-get update
+                sudo apt-get install -y parallel jq bc
+
+                # Verify
+                kubectl version --client
+                parallel --version
+                jq --version
+
+          - task: Bash@3
+            displayName: 'Install kind'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+                chmod +x kind
+                sudo mv kind /usr/local/bin/
+                kind --version
+
+          - task: Bash@3
+            displayName: 'Create kind cluster'
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./provision-cluster.sh \
+                  --provider kind \
+                  --name np-test-azure \
+                  --cni $(CNI) \
+                  --version $(K8S_VERSION) \
+                  --workers 2
+
+          - task: Bash@3
+            displayName: 'Verify cluster'
+            inputs:
+              targetType: 'inline'
+              script: |
+                kubectl get nodes
+                kubectl get pods -A
+
+          - task: Bash@3
+            displayName: 'Detect environment'
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./parallel-test-runner.sh --detect
+
+          - task: Bash@3
+            displayName: 'Run tests'
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./parallel-test-runner.sh --skip-unsupported
+            continueOnError: true
+
+          - task: Bash@3
+            displayName: 'Generate JUnit XML'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+
+          - task: PublishTestResults@2
+            displayName: 'Publish test results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-framework/junit.xml'
+              failTaskOnFailedTests: true
+              testRunTitle: 'Network Policy Tests - kind/Calico'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish test artifacts'
+            condition: always()
+            inputs:
+              PathtoPublish: 'test-framework/results'
+              ArtifactName: 'test-results-kind-calico'
+              publishLocation: 'Container'
+
+          - task: Bash@3
+            displayName: 'Cleanup cluster'
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./provision-cluster.sh --delete --provider kind --name np-test-azure || true
+                kubectl delete namespaces -l test-runner=parallel --wait=false || true
+
+      # Test on kind with Cilium
+      - job: TestKindCilium
+        displayName: 'Test on kind with Cilium'
+        pool:
+          vmImage: 'ubuntu-latest'
+        variables:
+          CNI: 'cilium'
+          K8S_VERSION: '1.28.0'
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: 'Install dependencies'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl
+                sudo mv kubectl /usr/local/bin/
+                sudo apt-get update
+                sudo apt-get install -y parallel jq bc
+
+          - task: Bash@3
+            displayName: 'Install kind'
+            inputs:
+              targetType: 'inline'
+              script: |
+                curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+                chmod +x kind
+                sudo mv kind /usr/local/bin/
+
+          - task: Bash@3
+            displayName: 'Create cluster and run tests'
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./provision-cluster.sh \
+                  --provider kind \
+                  --name np-test-azure \
+                  --cni $(CNI) \
+                  --version $(K8S_VERSION) \
+                  --workers 2
+
+                kubectl get nodes
+
+                ./parallel-test-runner.sh --skip-unsupported
+                ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+            continueOnError: true
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-framework/junit.xml'
+              testRunTitle: 'Network Policy Tests - kind/Cilium'
+
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              PathtoPublish: 'test-framework/results'
+              ArtifactName: 'test-results-kind-cilium'
+
+          - task: Bash@3
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./provision-cluster.sh --delete --provider kind --name np-test-azure || true
+
+      # Multi-version matrix test
+      - job: TestMultiVersion
+        displayName: 'Test across K8s versions'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          matrix:
+            k8s_1_27:
+              K8S_VERSION: '1.27.3'
+            k8s_1_28:
+              K8S_VERSION: '1.28.0'
+            k8s_1_29:
+              K8S_VERSION: '1.29.0'
+        variables:
+          CNI: 'calico'
+        steps:
+          - checkout: self
+
+          - task: Bash@3
+            displayName: 'Setup and test'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Install tools
+                curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+
+                curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+                chmod +x kind && sudo mv kind /usr/local/bin/
+
+                sudo apt-get update && sudo apt-get install -y parallel jq bc
+
+                # Create cluster
+                cd test-framework
+                ./provision-cluster.sh \
+                  --provider kind \
+                  --name np-test-k8s-$(K8S_VERSION) \
+                  --cni $(CNI) \
+                  --version $(K8S_VERSION) \
+                  --workers 2
+
+                # Run tests
+                ./parallel-test-runner.sh --skip-unsupported
+                ./lib/ci-helpers.sh junit-xml results/aggregate-*.json junit.xml
+            continueOnError: true
+
+          - task: PublishTestResults@2
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'test-framework/junit.xml'
+              testRunTitle: 'Network Policy Tests - K8s $(K8S_VERSION)'
+
+          - task: Bash@3
+            condition: always()
+            inputs:
+              targetType: 'inline'
+              script: |
+                cd test-framework
+                ./provision-cluster.sh --delete --provider kind --name np-test-k8s-$(K8S_VERSION) || true
+
+  - stage: Report
+    displayName: 'Generate Reports'
+    dependsOn: Test
+    condition: always()
+    jobs:
+      - job: GenerateSummary
+        displayName: 'Generate test summary'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self
+
+          - task: DownloadBuildArtifacts@0
+            displayName: 'Download artifacts'
+            inputs:
+              buildType: 'current'
+              downloadType: 'specific'
+              downloadPath: '$(System.ArtifactsDirectory)'
+
+          - task: Bash@3
+            displayName: 'Create summary'
+            inputs:
+              targetType: 'inline'
+              script: |
+                sudo apt-get update && sudo apt-get install -y jq bc
+
+                # Find latest result
+                LATEST_RESULT=$(find $(System.ArtifactsDirectory) -name "aggregate-*.json" | sort | tail -1)
+
+                if [[ -n "$LATEST_RESULT" ]]; then
+                  TOTAL=$(jq -r '.summary.total' "$LATEST_RESULT")
+                  PASSED=$(jq -r '.summary.passed' "$LATEST_RESULT")
+                  FAILED=$(jq -r '.summary.failed' "$LATEST_RESULT")
+                  TIMEOUT=$(jq -r '.summary.timeout' "$LATEST_RESULT")
+                  PASS_RATE=$(jq -r '.summary.pass_rate' "$LATEST_RESULT")
+
+                  cat > summary.md <<EOF
+                # Network Policy Test Summary
+
+                ## Results
+                - **Total Tests**: $TOTAL
+                - **Passed**: ✅ $PASSED
+                - **Failed**: ❌ $FAILED
+                - **Timeout**: ⏱️ $TIMEOUT
+                - **Pass Rate**: ${PASS_RATE}%
+
+                ## Test Matrix
+                - Kubernetes: 1.27, 1.28, 1.29
+                - CNI: Calico, Cilium
+                - Provider: kind
+
+                See build artifacts for detailed reports.
+                EOF
+
+                  cat summary.md
+
+                  echo "##vso[task.uploadsummary]$(System.DefaultWorkingDirectory)/summary.md"
+                fi
+
+          - task: PublishBuildArtifacts@1
+            condition: always()
+            inputs:
+              PathtoPublish: 'summary.md'
+              ArtifactName: 'test-summary'
+
+      - job: NotifySlack
+        displayName: 'Send Slack notification'
+        dependsOn: GenerateSummary
+        condition: and(always(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Bash@3
+            displayName: 'Send notification'
+            condition: failed()
+            inputs:
+              targetType: 'inline'
+              script: |
+                if [[ -n "$(SLACK_WEBHOOK_URL)" ]]; then
+                  curl -X POST -H 'Content-type: application/json' \
+                    --data "{\"text\":\"❌ Network Policy tests failed. Build: $(Build.BuildUri)\"}" \
+                    $(SLACK_WEBHOOK_URL)
+                fi

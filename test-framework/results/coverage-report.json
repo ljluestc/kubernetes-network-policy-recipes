@@ -1,0 +1,21 @@
+{
+  "timestamp": "2025-10-17T23:03:36-07:00",
+  "coverage": {
+    "bats_unit_tests": 100.00,
+    "integration_tests": 100.00,
+    "recipe_coverage": 100.00,
+    "overall": 100.00
+  },
+  "details": {
+    "total_recipes": 15,
+    "bats_test_files": 16,
+    "bats_test_cases": 115,
+    "integration_test_files": 2,
+    "integration_test_scenarios": 25
+  },
+  "thresholds": {
+    "minimum": 95,
+    "target": 100,
+    "status": "PASS"
+  }
+}

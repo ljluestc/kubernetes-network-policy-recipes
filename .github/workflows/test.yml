@@ -1,0 +1,791 @@
+name: Network Policy Tests
+
+on:
+  push:
+    branches:
+      - master
+      - main
+      - develop
+  pull_request:
+    branches:
+      - master
+      - main
+      - develop
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 'Kubernetes provider'
+        required: false
+        default: 'kind'
+        type: choice
+        options:
+          - kind
+          - minikube
+          - gke
+          - eks
+          - aks
+      cni:
+        description: 'CNI plugin'
+        required: false
+        default: 'calico'
+        type: choice
+        options:
+          - calico
+          - cilium
+          - weave
+
+env:
+  RESULTS_DIR: test-framework/results
+
+jobs:
+  # Pre-commit checks
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Cache pre-commit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure
+
+  # Detect changes to skip unnecessary runs
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.filter.outputs.tests }}
+      recipes: ${{ steps.filter.outputs.recipes }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            tests:
+              - 'test-framework/**'
+              - '.github/workflows/test.yml'
+            recipes:
+              - '[0-9][0-9]*.md'
+              - 'test-framework/**'
+
+  # BATS unit tests - fast validation
+  bats-tests:
+    runs-on: ubuntu-latest
+    needs: [pre-commit, changes]
+    if: needs.changes.outputs.tests == 'true' || needs.changes.outputs.recipes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version: ['1.27.3', '1.28.0', '1.29.0']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: bats-test
+          version: v0.20.0
+          node_image: kindest/node:v${{ matrix.k8s-version }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parallel jq bc
+
+      - name: Run BATS tests
+        id: bats
+        run: |
+          cd test-framework
+          ./run-all-bats-tests.sh --output both --verbose
+
+      - name: Upload BATS TAP results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bats-tap-k8s${{ matrix.k8s-version }}
+          path: test-framework/results/bats/tap/*.tap
+          retention-days: 30
+
+      - name: Upload BATS JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bats-junit-k8s${{ matrix.k8s-version }}
+          path: test-framework/results/bats/junit/*.xml
+          retention-days: 30
+
+      - name: Publish test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: test-framework/results/bats/junit/*.xml
+          check_name: BATS Test Results (k8s ${{ matrix.k8s-version }})
+
+  # Test on kind (local) - fast feedback
+  test-kind:
+    needs: [changes, bats-tests]
+    if: needs.changes.outputs.tests == 'true' || needs.changes.outputs.recipes == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s-version: ['1.27.3', '1.28.0', '1.29.0']
+        cni: ['calico', 'cilium']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ matrix.k8s-version }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ matrix.k8s-version }}-
+            ${{ runner.os }}-buildx-
+
+      - name: Cache test dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache
+            test-framework/bats-libs
+          key: ${{ runner.os }}-deps-${{ hashFiles('**/package-lock.json', '**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-deps-
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: np-test-${{ matrix.cni }}
+          version: v0.20.0
+          node_image: kindest/node:v${{ matrix.k8s-version }}
+          config: |
+            kind: Cluster
+            apiVersion: kind.x-k8s.io/v1alpha4
+            nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+            networking:
+              disableDefaultCNI: true
+              podSubnet: "10.244.0.0/16"
+
+      - name: Install CNI - Calico
+        if: matrix.cni == 'calico'
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26.1/manifests/calico.yaml
+          kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l k8s-app=calico-node
+
+      - name: Install CNI - Cilium
+        if: matrix.cni == 'cilium'
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/v1.14.0/install/kubernetes/quick-install.yaml
+          kubectl wait --for=condition=ready --timeout=300s -n kube-system pods -l k8s-app=cilium
+
+      - name: Verify cluster
+        run: |
+          kubectl get nodes
+          kubectl get pods -A
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parallel jq bc
+
+      - name: Detect environment
+        run: |
+          cd test-framework
+          ./parallel-test-runner.sh --detect
+
+      - name: Run tests
+        id: test
+        run: |
+          cd test-framework
+          ./parallel-test-runner.sh --skip-unsupported
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-kind-k8s${{ matrix.k8s-version }}-${{ matrix.cni }}
+          path: |
+            test-framework/results/**/*.json
+            test-framework/results/**/*.html
+          retention-days: 30
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report-kind-k8s${{ matrix.k8s-version }}-${{ matrix.cni }}
+          path: test-framework/results/html/*.html
+          retention-days: 30
+
+  # Test on minikube (alternative local)
+  test-minikube:
+    needs: changes
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cni: ['calico']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start minikube
+        uses: medyagh/setup-minikube@master
+        with:
+          cpus: 2
+          memory: 4096
+          kubernetes-version: v1.28.0
+          cni: ${{ matrix.cni }}
+
+      - name: Verify cluster
+        run: |
+          kubectl get nodes
+          kubectl get pods -A
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parallel jq bc
+
+      - name: Run tests
+        run: |
+          cd test-framework
+          ./parallel-test-runner.sh --skip-unsupported
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-minikube-${{ matrix.cni }}
+          path: |
+            test-framework/results/**/*.json
+            test-framework/results/**/*.html
+          retention-days: 30
+
+  # Generate test coverage report
+  coverage-report:
+    needs: [bats-tests, test-kind]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      - name: Generate coverage report
+        id: coverage
+        run: |
+          source test-framework/lib/coverage-tracker.sh
+          generate_coverage_report test-framework/results/coverage-report.json
+          generate_html_coverage_report test-framework/results/coverage-report.json \
+            test-framework/results/coverage-report.html
+
+          # Extract coverage metrics
+          OVERALL=$(jq -r '.coverage.overall' test-framework/results/coverage-report.json)
+          BATS=$(jq -r '.coverage.bats_unit_tests' test-framework/results/coverage-report.json)
+          INTEGRATION=$(jq -r '.coverage.integration_tests' test-framework/results/coverage-report.json)
+          RECIPE=$(jq -r '.coverage.recipe_coverage' test-framework/results/coverage-report.json)
+          TESTS=$(jq -r '.details.total_test_cases' test-framework/results/coverage-report.json)
+          STATUS=$(jq -r '.thresholds.status' test-framework/results/coverage-report.json)
+
+          echo "overall=$OVERALL" >> $GITHUB_OUTPUT
+          echo "bats=$BATS" >> $GITHUB_OUTPUT
+          echo "integration=$INTEGRATION" >> $GITHUB_OUTPUT
+          echo "recipe=$RECIPE" >> $GITHUB_OUTPUT
+          echo "tests=$TESTS" >> $GITHUB_OUTPUT
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Generate all badges
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        run: |
+          source test-framework/lib/badge-generator.sh
+          generate_all_badges test-framework/results/coverage-report.json badges
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            test-framework/results/coverage-report.json
+            test-framework/results/coverage-report.html
+          retention-days: 90
+
+      - name: Upload badges
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: badges
+          path: badges/*.json
+          retention-days: 90
+
+      - name: Enforce coverage threshold
+        run: |
+          source test-framework/lib/coverage-enforcer.sh
+          enforce_coverage_threshold "${{ steps.coverage.outputs.overall }}" 95
+
+      - name: Check coverage regression
+        if: github.event_name == 'pull_request'
+        run: |
+          source test-framework/lib/coverage-enforcer.sh
+          check_coverage_regression "${{ steps.coverage.outputs.overall }}"
+
+  # Generate test summary and badges
+  summary:
+    needs: [bats-tests, test-kind, coverage-report]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      - name: Aggregate results
+        id: aggregate
+        run: |
+          # Find the most recent aggregate file
+          LATEST_RESULT=$(find artifacts -name "aggregate-*.json" | sort | tail -1)
+
+          if [[ -n "$LATEST_RESULT" ]]; then
+            TOTAL=$(jq -r '.summary.total' "$LATEST_RESULT")
+            PASSED=$(jq -r '.summary.passed' "$LATEST_RESULT")
+            FAILED=$(jq -r '.summary.failed' "$LATEST_RESULT")
+            TIMEOUT=$(jq -r '.summary.timeout' "$LATEST_RESULT")
+            PASS_RATE=$(jq -r '.summary.pass_rate' "$LATEST_RESULT")
+
+            echo "total=$TOTAL" >> $GITHUB_OUTPUT
+            echo "passed=$PASSED" >> $GITHUB_OUTPUT
+            echo "failed=$FAILED" >> $GITHUB_OUTPUT
+            echo "timeout=$TIMEOUT" >> $GITHUB_OUTPUT
+            echo "pass_rate=$PASS_RATE" >> $GITHUB_OUTPUT
+
+            # Determine badge color
+            if (( $(echo "$PASS_RATE >= 90" | bc -l) )); then
+              echo "badge_color=brightgreen" >> $GITHUB_OUTPUT
+            elif (( $(echo "$PASS_RATE >= 70" | bc -l) )); then
+              echo "badge_color=green" >> $GITHUB_OUTPUT
+            elif (( $(echo "$PASS_RATE >= 50" | bc -l) )); then
+              echo "badge_color=yellow" >> $GITHUB_OUTPUT
+            else
+              echo "badge_color=red" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No test results found"
+            echo "badge_color=lightgrey" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create test summary
+        if: always()
+        run: |
+          # Extract coverage from coverage report
+          COVERAGE_REPORT=$(find artifacts -name "coverage-report.json" | head -1)
+
+          if [[ -n "$COVERAGE_REPORT" ]]; then
+            OVERALL_COV=$(jq -r '.coverage.overall' "$COVERAGE_REPORT")
+            BATS_COV=$(jq -r '.coverage.bats_unit_tests' "$COVERAGE_REPORT")
+            INT_COV=$(jq -r '.coverage.integration_tests' "$COVERAGE_REPORT")
+            RECIPE_COV=$(jq -r '.coverage.recipe_coverage' "$COVERAGE_REPORT")
+            TEST_COUNT=$(jq -r '.details.total_test_cases' "$COVERAGE_REPORT")
+          else
+            OVERALL_COV="N/A"
+            BATS_COV="N/A"
+            INT_COV="N/A"
+            RECIPE_COV="N/A"
+            TEST_COUNT="N/A"
+          fi
+
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 🧪 Network Policy Test Results
+
+          ### Test Execution Summary
+          - **Total Tests**: ${{ steps.aggregate.outputs.total }}
+          - **Passed**: ✅ ${{ steps.aggregate.outputs.passed }}
+          - **Failed**: ❌ ${{ steps.aggregate.outputs.failed }}
+          - **Timeout**: ⏱️ ${{ steps.aggregate.outputs.timeout }}
+          - **Pass Rate**: ${{ steps.aggregate.outputs.pass_rate }}%
+
+          ### Test Coverage
+          | Metric | Coverage |
+          |--------|----------|
+          | Overall Coverage | ${OVERALL_COV}% |
+          | BATS Unit Tests | ${BATS_COV}% |
+          | Integration Tests | ${INT_COV}% |
+          | Recipe Coverage | ${RECIPE_COV}% |
+          | **Total Test Cases** | **${TEST_COUNT}** |
+
+          ### Test Matrix
+          - Kubernetes: 1.27, 1.28, 1.29
+          - CNI: Calico, Cilium
+          - Provider: kind
+
+          See artifacts for detailed HTML reports.
+          EOF
+
+  # Post results to PR
+  pr-comment:
+    needs: [test-kind, coverage-report]
+    if: github.event_name == 'pull_request' && always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate PR comment
+        id: comment
+        run: |
+          # Find the most recent aggregate file
+          LATEST_RESULT=$(find artifacts -name "aggregate-*.json" | sort | tail -1)
+
+          # Extract coverage data
+          COVERAGE_REPORT=$(find artifacts -name "coverage-report.json" | head -1)
+
+          if [[ -n "$LATEST_RESULT" ]]; then
+            TOTAL=$(jq -r '.summary.total' "$LATEST_RESULT")
+            PASSED=$(jq -r '.summary.passed' "$LATEST_RESULT")
+            FAILED=$(jq -r '.summary.failed' "$LATEST_RESULT")
+            TIMEOUT=$(jq -r '.summary.timeout' "$LATEST_RESULT")
+            PASS_RATE=$(jq -r '.summary.pass_rate' "$LATEST_RESULT")
+
+            if [[ "$FAILED" == "0" && "$TIMEOUT" == "0" ]]; then
+              STATUS_EMOJI="✅"
+              STATUS_TEXT="All tests passed!"
+            else
+              STATUS_EMOJI="❌"
+              STATUS_TEXT="Some tests failed"
+            fi
+
+            # Build coverage section if available
+            COVERAGE_SECTION=""
+            if [[ -n "$COVERAGE_REPORT" ]]; then
+              OVERALL_COV=$(jq -r '.coverage.overall' "$COVERAGE_REPORT")
+              BATS_COV=$(jq -r '.coverage.bats_unit_tests' "$COVERAGE_REPORT")
+              INT_COV=$(jq -r '.coverage.integration_tests' "$COVERAGE_REPORT")
+              RECIPE_COV=$(jq -r '.coverage.recipe_coverage' "$COVERAGE_REPORT")
+              TEST_COUNT=$(jq -r '.details.total_test_cases' "$COVERAGE_REPORT")
+              COV_STATUS=$(jq -r '.thresholds.status' "$COVERAGE_REPORT")
+
+              if [[ "$COV_STATUS" == "PASS" ]]; then
+                COV_EMOJI="✅"
+              else
+                COV_EMOJI="❌"
+              fi
+
+              COVERAGE_SECTION="
+          ### 📊 Test Coverage
+
+          | Metric | Coverage | Status |
+          |--------|----------|--------|
+          | Overall Coverage | ${OVERALL_COV}% | ${COV_EMOJI} |
+          | BATS Unit Tests | ${BATS_COV}% | |
+          | Integration Tests | ${INT_COV}% | |
+          | Recipe Coverage | ${RECIPE_COV}% | |
+          | **Total Test Cases** | **${TEST_COUNT}** | |
+
+          Coverage threshold: 95% (${COV_STATUS})
+          "
+            fi
+
+            cat > comment.md <<EOF
+          ## $STATUS_EMOJI Network Policy Test Results
+
+          $STATUS_TEXT
+
+          ### Test Execution Results
+          | Metric | Value |
+          |--------|-------|
+          | Total Tests | $TOTAL |
+          | ✅ Passed | $PASSED |
+          | ❌ Failed | $FAILED |
+          | ⏱️ Timeout | $TIMEOUT |
+          | 📊 Pass Rate | ${PASS_RATE}% |
+          ${COVERAGE_SECTION}
+
+          ### Test Environment
+          - **Provider**: kind
+          - **CNI**: Calico, Cilium
+          - **Kubernetes**: 1.27, 1.28, 1.29
+
+          See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for detailed reports.
+          EOF
+          else
+            cat > comment.md <<EOF
+          ## ⚠️ Network Policy Test Results
+
+          No test results found. Tests may have failed to run.
+
+          See [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+          EOF
+          fi
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const comment = fs.readFileSync('comment.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # Notify on failures
+  notify-slack:
+    needs: [test-kind]
+    if: failure() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Slack notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"❌ Network Policy tests failed on ${{ github.ref_name }}. See: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            $SLACK_WEBHOOK_URL
+
+  # Notify Teams on failures
+  notify-teams:
+    needs: [test-kind]
+    if: failure() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Teams notification
+        if: env.TEAMS_WEBHOOK_URL != ''
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{
+              \"@type\": \"MessageCard\",
+              \"@context\": \"http://schema.org/extensions\",
+              \"themeColor\": \"d63031\",
+              \"summary\": \"Network Policy Tests Failed\",
+              \"sections\": [{
+                \"activityTitle\": \"❌ Network Policy Tests Failed\",
+                \"facts\": [{
+                  \"name\": \"Branch:\",
+                  \"value\": \"${{ github.ref_name }}\"
+                }, {
+                  \"name\": \"Triggered by:\",
+                  \"value\": \"${{ github.actor }}\"
+                }, {
+                  \"name\": \"Commit:\",
+                  \"value\": \"${{ github.sha }}\"
+                }],
+                \"markdown\": true
+              }],
+              \"potentialAction\": [{
+                \"@type\": \"OpenUri\",
+                \"name\": \"View Workflow Run\",
+                \"targets\": [{
+                  \"os\": \"default\",
+                  \"uri\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                }]
+              }]
+            }" \
+            $TEAMS_WEBHOOK_URL
+
+  # Release automation with semantic versioning
+  release:
+    needs: [bats-tests, test-kind, coverage-report]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package artifacts for release
+        run: |
+          mkdir -p release-assets
+
+          # Package coverage reports
+          if [ -d "artifacts/coverage-report" ]; then
+            tar -czf release-assets/coverage-reports-${{ github.ref_name }}.tar.gz \
+              -C artifacts/coverage-report .
+          fi
+
+          # Package test results
+          find artifacts -name "*.json" -o -name "*.html" | \
+            tar -czf release-assets/test-results-${{ github.ref_name }}.tar.gz -T -
+
+          # Package badges
+          if [ -d "artifacts/badges" ]; then
+            tar -czf release-assets/badges-${{ github.ref_name }}.tar.gz \
+              -C artifacts/badges .
+          fi
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Extract version from tag
+          VERSION=${{ github.ref_name }}
+
+          # Generate changelog from commits since last tag
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          cat > release-notes.md <<EOF
+          ## Kubernetes Network Policy Recipes ${VERSION}
+
+          ### Changes
+          ${CHANGELOG}
+
+          ### Test Results
+          - All BATS unit tests passed
+          - Integration tests verified on kind with Calico and Cilium
+          - Tested on Kubernetes 1.27, 1.28, 1.29
+
+          ### Artifacts
+          - Coverage reports included
+          - Test results included
+          - Status badges included
+
+          See attached artifacts for detailed test reports and coverage data.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: release-notes.md
+          files: release-assets/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Cloud provider integration tests (scheduled/manual only)
+  test-cloud:
+    needs: changes
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: ['gke', 'eks', 'aks']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        if: matrix.provider == 'gke'
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        if: matrix.provider == 'eks'
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Azure Login
+        uses: azure/login@v1
+        if: matrix.provider == 'aks'
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Provision cluster
+        run: |
+          cd test-framework
+          ./provision-cluster.sh --provider ${{ matrix.provider }} --cleanup-on-exit
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parallel jq bc
+
+      - name: Run tests on ${{ matrix.provider }}
+        run: |
+          cd test-framework
+          ./parallel-test-runner.sh --skip-unsupported
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.provider }}
+          path: |
+            test-framework/results/**/*.json
+            test-framework/results/**/*.html
+          retention-days: 90
+
+      - name: Cleanup cluster
+        if: always()
+        run: |
+          cd test-framework
+          ./cleanup-environment.sh --provider ${{ matrix.provider }}

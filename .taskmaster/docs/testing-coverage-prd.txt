@@ -1,0 +1,461 @@
+# Product Requirements Document: 100% Test Coverage & CI/CD Integration
+
+## Executive Summary
+Achieve complete test coverage (100% integration, unit, and CI/CD pre-commit coverage) for the kubernetes-network-policy-recipes project with comprehensive automated testing, quality gates, and continuous validation.
+
+## Project Goals
+1. 100% Integration Test Coverage - All recipes and tools tested in real Kubernetes environments
+2. 100% Unit Test Coverage - All functions, utilities, and components unit tested
+3. 100% CI/CD Pre-commit Coverage - All code changes validated before merge
+4. Zero untested code paths in production
+5. Automated quality gates preventing regressions
+
+## Current State Analysis
+
+### Existing Test Infrastructure
+- Parallel test framework for recipe validation (test-framework/)
+- Performance benchmarking tools (performance-benchmark.sh)
+- Cleanup automation (cleanup-environment.sh)
+- Multi-cloud support scripts (provision-cluster.sh)
+- CI/CD pipeline templates (GitHub Actions, GitLab CI, Jenkins, CircleCI, Azure DevOps)
+
+### Coverage Gaps Identified
+1. Missing unit tests for all bash scripts and functions
+2. No code coverage reporting infrastructure
+3. Incomplete integration test coverage for edge cases
+4. Missing pre-commit hooks for quality validation
+5. No mutation testing for test quality validation
+6. Incomplete error path testing
+7. Missing security testing (SAST/DAST)
+8. No contract testing for multi-tool integration
+
+## Requirements
+
+### 1. Unit Test Framework Implementation
+**Description**: Implement comprehensive unit testing for all bash scripts and utilities.
+
+**Acceptance Criteria**:
+- Install and configure bats-core (Bash Automated Testing System) or shunit2
+- Unit test all functions in test-framework/lib/test-functions.sh (100% coverage)
+- Unit test performance-benchmark.sh helper functions (100% coverage)
+- Unit test cleanup-environment.sh logic (100% coverage)
+- Unit test analyze-performance.sh utilities (100% coverage)
+- Unit test provision-cluster.sh functions (100% coverage)
+- Mock kubectl, jq, and other external dependencies
+- Achieve 100% branch coverage for all conditional logic
+- Test all error paths and edge cases
+- Generate code coverage reports in HTML and JSON formats
+
+**Test Strategy**:
+- Function-level unit tests with mocked dependencies
+- Parameterized tests for different input combinations
+- Error injection tests for failure scenarios
+- Coverage reporting with kcov or bashcov
+
+### 2. Integration Test Suite Expansion
+**Description**: Expand integration tests to cover 100% of NetworkPolicy recipes and tool combinations.
+
+**Acceptance Criteria**:
+- Integration tests for all 15+ NetworkPolicy recipes
+- Cross-recipe interaction tests (policy combinations)
+- Multi-namespace scenario testing
+- Network isolation verification tests
+- Performance benchmark integration tests
+- Cleanup automation integration tests
+- Cloud provider-specific integration tests (GKE, EKS, AKS, kind, minikube)
+- CNI plugin compatibility tests (Calico, Cilium, Weave, AWS VPC CNI, Azure CNI)
+- Failure scenario and recovery tests
+- Test data generation and fixture management
+- Integration test coverage reporting
+
+**Test Strategy**:
+- End-to-end recipe validation in real clusters
+- Matrix testing across cloud providers and CNI plugins
+- Chaos testing for reliability validation
+- Integration test execution time < 15 minutes
+
+### 3. Code Coverage Infrastructure
+**Description**: Implement comprehensive code coverage measurement and reporting.
+
+**Acceptance Criteria**:
+- Install kcov or bashcov for bash code coverage
+- Configure coverage collection for all test runs
+- Generate HTML coverage reports with line/branch/function coverage
+- Generate JSON/XML coverage reports for CI/CD integration
+- Implement coverage badges for README
+- Set coverage thresholds (100% for new code, 95% overall minimum)
+- Configure coverage diff reporting for PRs
+- Integrate coverage with SonarQube or CodeClimate
+- Track coverage trends over time
+- Fail builds if coverage drops below threshold
+
+**Test Strategy**:
+- Validate coverage accuracy with known test scenarios
+- Verify coverage reporting in CI/CD pipelines
+- Test coverage threshold enforcement
+
+### 4. Pre-commit Hook Framework
+**Description**: Implement comprehensive pre-commit hooks to validate all code changes before commit.
+
+**Acceptance Criteria**:
+- Install pre-commit framework
+- Configure ShellCheck for bash script linting (all scripts must pass)
+- Configure yamllint for YAML validation (NetworkPolicies, CI configs)
+- Configure markdownlint for documentation
+- Add bash script formatter (shfmt) with auto-fix
+- Implement custom hooks for:
+  - Recipe syntax validation
+  - NetworkPolicy schema validation
+  - Test function naming convention checks
+  - Documentation completeness checks
+  - Security vulnerability scanning (bandit for python, shellcheck for bash)
+- Add unit test execution in pre-commit (fast subset)
+- Add integration test trigger for critical paths
+- Configure pre-commit CI validation
+- Create .pre-commit-config.yaml with all hooks
+- Document pre-commit setup in CONTRIBUTING.md
+
+**Test Strategy**:
+- Test all pre-commit hooks with valid and invalid inputs
+- Verify hook performance (< 30 seconds total)
+- Test auto-fix functionality
+- Validate CI pre-commit enforcement
+
+### 5. CI/CD Quality Gates Implementation
+**Description**: Implement strict quality gates in all CI/CD pipelines to enforce coverage and quality standards.
+
+**Acceptance Criteria**:
+- Configure quality gates in GitHub Actions, GitLab CI, Jenkins, CircleCI, Azure DevOps
+- Enforce minimum code coverage (100% for new code, 95% overall)
+- Enforce zero high/critical security vulnerabilities
+- Enforce zero linting errors
+- Enforce successful unit tests (100% pass rate)
+- Enforce successful integration tests (100% pass rate)
+- Enforce documentation completeness
+- Implement branch protection rules requiring quality gate passage
+- Configure status checks for all validation steps
+- Add automated PR comments with coverage/quality reports
+- Implement build artifact retention with test reports
+- Configure failure notifications (Slack, email, GitHub status)
+
+**Test Strategy**:
+- Test quality gate enforcement with intentionally failing code
+- Verify all CI/CD platforms enforce gates correctly
+- Test notification delivery
+
+### 6. Mutation Testing Framework
+**Description**: Implement mutation testing to validate test suite effectiveness.
+
+**Acceptance Criteria**:
+- Install mutation testing tool (mutmut for bash/python)
+- Configure mutation testing for all scripts
+- Achieve 100% mutation score (all mutants killed)
+- Generate mutation testing reports
+- Integrate mutation testing in CI/CD (scheduled runs)
+- Fix any surviving mutants by adding missing tests
+- Document mutation testing process
+
+**Test Strategy**:
+- Run mutation testing on known-good test suites
+- Verify mutation detection accuracy
+- Measure mutation testing performance
+
+### 7. Security Testing Integration
+**Description**: Integrate comprehensive security testing in the test pipeline.
+
+**Acceptance Criteria**:
+- Implement SAST (Static Application Security Testing):
+  - ShellCheck for bash scripts (security rules enabled)
+  - Bandit for Python scripts
+  - Trivy for container images
+  - Semgrep for custom security rules
+- Implement DAST (Dynamic Application Security Testing):
+  - OWASP ZAP for web components (if any)
+  - Network policy security validation
+- Implement dependency scanning:
+  - Snyk or Dependabot for dependency vulnerabilities
+  - Container image vulnerability scanning
+- Configure security gates in CI/CD (zero high/critical vulnerabilities)
+- Generate security reports and dashboards
+- Implement automated security issue creation
+- Add security testing documentation
+
+**Test Strategy**:
+- Test security tools with known vulnerable code
+- Verify vulnerability detection accuracy
+- Test security gate enforcement
+
+### 8. Contract Testing Framework
+**Description**: Implement contract testing for tool integrations and API interactions.
+
+**Acceptance Criteria**:
+- Define contracts for tool outputs (JSON schemas)
+- Implement contract validation for:
+  - Test framework JSON output
+  - Performance benchmark results
+  - Analysis report formats
+  - Cleanup report formats
+- Add contract testing in CI/CD
+- Version control contract schemas
+- Implement backward compatibility testing
+- Add contract violation detection
+- Document contract specifications
+
+**Test Strategy**:
+- Test contract validation with valid/invalid data
+- Verify backward compatibility detection
+- Test contract versioning
+
+### 9. Test Data Management
+**Description**: Implement comprehensive test data generation and fixture management.
+
+**Acceptance Criteria**:
+- Create test data generators for:
+  - NetworkPolicy YAML files (valid/invalid)
+  - Kubernetes manifests (pods, services, namespaces)
+  - Benchmark results (historical data)
+  - Cloud provider configurations
+- Implement test fixture management:
+  - Golden file testing for expected outputs
+  - Test data versioning
+  - Fixture cleanup automation
+- Create seed data for integration tests
+- Implement data-driven testing framework
+- Add test data documentation
+- Create test data generation utilities
+
+**Test Strategy**:
+- Validate generated test data correctness
+- Test fixture loading/cleanup
+- Verify data-driven test execution
+
+### 10. Performance Test Suite
+**Description**: Implement comprehensive performance testing beyond basic benchmarks.
+
+**Acceptance Criteria**:
+- Implement load testing for parallel test execution
+- Add stress testing for resource limits
+- Implement endurance testing for long-running scenarios
+- Add scalability testing (100s of policies, large clusters)
+- Create performance regression test suite
+- Implement performance profiling (CPU, memory, I/O)
+- Set performance SLOs (Service Level Objectives)
+- Configure performance gates in CI/CD
+- Generate performance trend reports
+- Add performance testing documentation
+
+**Test Strategy**:
+- Validate performance test accuracy
+- Test performance gate enforcement
+- Verify SLO monitoring
+
+### 11. Test Reporting Dashboard
+**Description**: Create comprehensive test reporting dashboard with metrics and trends.
+
+**Acceptance Criteria**:
+- Implement centralized test reporting system
+- Create dashboard showing:
+  - Overall test coverage (unit, integration, e2e)
+  - Test pass/fail trends over time
+  - Performance benchmark trends
+  - Security vulnerability trends
+  - Code quality metrics
+  - Flaky test detection and tracking
+- Integrate with existing reporting tools (Allure, ReportPortal)
+- Add historical test data retention (90 days minimum)
+- Implement test result aggregation across CI/CD platforms
+- Create email reports for test summaries
+- Add real-time test execution monitoring
+- Configure alerting for test failures/regressions
+
+**Test Strategy**:
+- Test dashboard data accuracy
+- Verify trend calculation correctness
+- Test alerting functionality
+
+### 12. Test Environment Management
+**Description**: Implement comprehensive test environment provisioning and management.
+
+**Acceptance Criteria**:
+- Automate test environment creation (ephemeral clusters)
+- Implement environment isolation per test suite
+- Add environment health monitoring
+- Create environment teardown automation
+- Implement environment pooling for faster tests
+- Add multi-region environment support
+- Configure cost optimization for cloud environments
+- Implement environment state validation
+- Add environment debugging capabilities
+- Document environment management procedures
+
+**Test Strategy**:
+- Test environment provisioning reliability
+- Verify isolation effectiveness
+- Test cleanup automation
+
+## Success Metrics
+
+### Coverage Metrics
+- **Unit Test Coverage**: 100% (line, branch, function)
+- **Integration Test Coverage**: 100% (all recipes, all scenarios)
+- **Mutation Test Score**: 100% (all mutants killed)
+- **Code Coverage**: ≥95% overall, 100% for new code
+- **Pre-commit Hook Success Rate**: 100% (all commits validated)
+
+### Quality Metrics
+- **Test Pass Rate**: 100% (zero flaky tests)
+- **Build Success Rate**: ≥99% (excluding external failures)
+- **Security Vulnerability Count**: 0 (high/critical)
+- **Linting Error Count**: 0
+- **Documentation Coverage**: 100% (all features documented)
+
+### Performance Metrics
+- **Unit Test Execution Time**: <2 minutes
+- **Integration Test Execution Time**: <15 minutes
+- **Pre-commit Hook Execution Time**: <30 seconds
+- **Coverage Report Generation Time**: <1 minute
+- **CI/CD Pipeline Duration**: <20 minutes
+
+### Process Metrics
+- **Pre-commit Hook Adoption**: 100% (all developers)
+- **Quality Gate Compliance**: 100% (all PRs pass gates)
+- **Test-First Development**: ≥80% (tests before implementation)
+- **Code Review Coverage**: 100% (all changes reviewed)
+
+## Implementation Phases
+
+### Phase 1: Foundation (Week 1)
+- Install test frameworks (bats, kcov/bashcov)
+- Configure code coverage infrastructure
+- Set up pre-commit framework
+- Initial unit tests for critical functions
+
+### Phase 2: Unit Testing (Week 2-3)
+- Complete unit tests for all scripts (100% coverage)
+- Implement mock infrastructure
+- Set up coverage reporting
+- Configure coverage thresholds
+
+### Phase 3: Integration Testing (Week 3-4)
+- Expand integration test suite
+- Add cross-recipe tests
+- Implement multi-cloud tests
+- Add failure scenario tests
+
+### Phase 4: Quality Infrastructure (Week 4-5)
+- Implement pre-commit hooks (all tools)
+- Configure CI/CD quality gates
+- Set up mutation testing
+- Add security testing
+
+### Phase 5: Advanced Testing (Week 5-6)
+- Implement contract testing
+- Add performance test suite
+- Create test data management
+- Build test reporting dashboard
+
+### Phase 6: Hardening (Week 6-7)
+- Fix all coverage gaps
+- Eliminate flaky tests
+- Optimize test performance
+- Complete documentation
+
+## Risks and Mitigation
+
+### Risks
+1. Bash script testing complexity → Use bats-core with extensive mocking
+2. Integration test flakiness → Implement retry logic and better synchronization
+3. Coverage tool limitations → Use multiple tools for cross-validation
+4. CI/CD pipeline performance → Parallelize tests, use test caching
+5. Developer resistance to pre-commit hooks → Education and documentation
+
+### Mitigation Strategies
+- Extensive documentation and examples
+- Gradual rollout with developer feedback
+- Performance optimization from day one
+- Clear benefits communication
+
+## Dependencies
+
+### Tools Required
+- bats-core or shunit2 (unit testing)
+- kcov or bashcov (code coverage)
+- pre-commit framework
+- ShellCheck (linting)
+- yamllint, markdownlint (validation)
+- shfmt (formatting)
+- mutmut or similar (mutation testing)
+- Trivy, Snyk (security scanning)
+- Allure or ReportPortal (test reporting)
+
+### Infrastructure Required
+- CI/CD platforms configured (GitHub Actions, GitLab CI, etc.)
+- Test cluster access (GKE, EKS, AKS, or local)
+- Artifact storage (test reports, coverage data)
+- Monitoring/alerting platform
+
+## Success Criteria
+
+The project will be considered successful when:
+1. ✅ 100% unit test coverage achieved (line, branch, function)
+2. ✅ 100% integration test coverage achieved (all recipes, all scenarios)
+3. ✅ 100% mutation test score achieved (all mutants killed)
+4. ✅ Pre-commit hooks configured and enforced (100% adoption)
+5. ✅ CI/CD quality gates implemented (all platforms)
+6. ✅ Zero high/critical security vulnerabilities
+7. ✅ Zero linting errors in codebase
+8. ✅ All tests passing (100% pass rate)
+9. ✅ Test execution time within SLOs
+10. ✅ Complete documentation for all test infrastructure
+
+## Deliverables
+
+1. **Unit Test Suite**
+   - Complete unit tests for all bash scripts
+   - Mock infrastructure for external dependencies
+   - Coverage reports (HTML, JSON)
+
+2. **Integration Test Suite**
+   - Expanded integration tests (100% coverage)
+   - Multi-cloud test scenarios
+   - Failure and recovery tests
+
+3. **Test Infrastructure**
+   - Code coverage system with reporting
+   - Pre-commit hook framework (configured)
+   - CI/CD quality gates (all platforms)
+   - Mutation testing framework
+   - Security testing integration
+
+4. **Test Reporting**
+   - Centralized test dashboard
+   - Coverage trend reports
+   - Quality metrics dashboard
+   - Automated test reports
+
+5. **Documentation**
+   - Test framework documentation
+   - Pre-commit setup guide
+   - CI/CD integration guide
+   - Test writing guidelines
+   - Troubleshooting guide
+
+## Timeline
+
+- **Week 1**: Foundation and setup
+- **Week 2-3**: Unit testing (100% coverage)
+- **Week 3-4**: Integration testing expansion
+- **Week 4-5**: Quality infrastructure
+- **Week 5-6**: Advanced testing
+- **Week 6-7**: Hardening and documentation
+- **Week 7**: Final validation and sign-off
+
+**Total Duration**: 7 weeks
+
+## Sign-off
+
+This PRD requires approval from:
+- Project maintainers
+- QA/Test engineering team
+- DevOps/SRE team
+- Security team

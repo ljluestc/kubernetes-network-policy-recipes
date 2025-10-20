@@ -1,0 +1,399 @@
+<context>
+# Overview
+Kubernetes Network Policy Recipes is a comprehensive guide providing practical recipes for implementing network security policies in Kubernetes clusters. This project helps developers and platform engineers understand and implement network segmentation, traffic control, and zero-trust networking principles in Kubernetes environments.
+
+# Problem Statement
+Most Kubernetes installations do not provide network policy support by default, and understanding how to properly secure cluster networking through NetworkPolicies is complex. Users need practical, tested recipes that demonstrate ingress and egress traffic control patterns.
+
+# Target Audience
+- Platform engineers implementing Kubernetes security
+- DevOps teams managing Kubernetes clusters
+- Security engineers implementing zero-trust networking
+- Developers learning Kubernetes networking concepts
+- Organizations requiring network segmentation and isolation
+
+# User Experience
+Users follow sequential recipes that build from basic concepts to advanced patterns:
+1. Create a test cluster with network policy support
+2. Learn deny-all and allow-all patterns
+3. Implement namespace-level isolation
+4. Configure external traffic handling
+5. Apply advanced multi-selector and port-level controls
+6. Manage egress traffic policies
+
+Each recipe includes:
+- Clear objectives and use cases
+- Step-by-step commands
+- YAML manifests
+- Verification steps
+- Cleanup instructions
+</context>
+
+<PRD>
+# Technical Architecture
+The project consists of:
+- Markdown-based recipe documentation
+- YAML NetworkPolicy manifests
+- Example kubectl commands
+- Test procedures for each pattern
+- GIF visualizations of traffic flow
+- Dependency tracking between recipes
+
+# Development Roadmap
+
+## Phase 1: Foundation & Setup (NP-00)
+**Task: Create Kubernetes Cluster with Network Policy Support**
+- Priority: Critical
+- Type: Infrastructure Setup
+- Dependencies: None
+- Estimated Time: 10 minutes
+
+Requirements:
+- Create GKE cluster with --enable-network-policy flag
+- Configure Calico as networking provider
+- Verify cluster has 3 nodes
+- Validate NetworkPolicy API availability
+- Document cluster creation command
+- Provide cleanup/deletion instructions
+
+Success Criteria:
+- Cluster named 'np' created in us-central1-b zone
+- Network Policy feature enabled
+- kubectl can access cluster
+- All nodes are ready
+
+## Phase 2: Basic Policy Patterns (NP-01 through NP-02A)
+
+**Task NP-01: Deny All Traffic to an Application**
+- Priority: High
+- Type: Basic Policy
+- Dependencies: NP-00
+- Category: Security Foundation
+- Estimated Time: 15 minutes
+
+Requirements:
+- Deploy test nginx application with label app=web
+- Verify initial connectivity (before policy)
+- Create NetworkPolicy with empty ingress rules
+- Apply policy to block all traffic to app
+- Test and verify traffic is blocked (timeout)
+- Document deny-all pattern
+
+Key Learning: Empty ingress array blocks all incoming traffic
+
+**Task NP-02: Limit Traffic to an Application**
+- Priority: High
+- Type: Basic Policy
+- Dependencies: NP-01
+- Category: Whitelisting
+- Estimated Time: 15 minutes
+
+Requirements:
+- Deploy two applications: web (nginx) and apiserver
+- Create NetworkPolicy allowing only apiserver to access web
+- Use podSelector with matchLabels
+- Test connectivity from allowed pod (apiserver)
+- Test connectivity from non-allowed pod (verify blocked)
+- Document selective allow pattern
+
+Key Learning: podSelector in ingress.from enables whitelisting specific pods
+
+**Task NP-02A: Allow All Traffic to an Application**
+- Priority: Medium
+- Type: Basic Policy
+- Dependencies: NP-01
+- Category: Permissive Policies
+- Estimated Time: 10 minutes
+
+Requirements:
+- Deploy nginx application
+- Create NetworkPolicy with empty matchLabels in ingress.from
+- Verify traffic allowed from any source
+- Document use case for explicit allow-all
+- Explain when this is needed (overriding namespace deny-all)
+
+Key Learning: Empty matchLabels {} in ingress.from allows traffic from all sources
+
+## Phase 3: Namespace-Level Policies (NP-03 through NP-07)
+
+**Task NP-03: Deny All Non-Whitelisted Traffic in Namespace**
+- Priority: High
+- Type: Namespace Policy
+- Dependencies: NP-02
+- Category: Default Deny
+- Estimated Time: 20 minutes
+
+Requirements:
+- Create NetworkPolicy with empty podSelector {}
+- Apply to default namespace
+- Verify policy applies to all pods in namespace
+- Test that all ingress is blocked by default
+- Document namespace-wide default-deny pattern
+- Explain this as foundation for zero-trust
+
+Key Learning: Empty podSelector {} applies policy to all pods in namespace
+
+**Task NP-04: Deny Traffic from Other Namespaces**
+- Priority: High
+- Type: Namespace Isolation
+- Dependencies: NP-03
+- Category: Multi-tenancy
+- Estimated Time: 20 minutes
+
+Requirements:
+- Create two namespaces: prod and dev
+- Deploy applications in each namespace
+- Create NetworkPolicy limiting traffic to same namespace only
+- Use namespaceSelector with matchLabels
+- Test cross-namespace communication is blocked
+- Verify same-namespace communication works
+- Document namespace isolation pattern
+
+Key Learning: Missing namespaceSelector in ingress.from restricts to same namespace
+
+**Task NP-05: Allow Traffic from All Namespaces**
+- Priority: Medium
+- Type: Cross-Namespace Access
+- Dependencies: NP-04
+- Category: Shared Services
+- Estimated Time: 15 minutes
+
+Requirements:
+- Deploy shared service (e.g., common logging service)
+- Create NetworkPolicy with namespaceSelector: {}
+- Allow traffic from any namespace
+- Test access from multiple namespaces
+- Document shared service pattern
+
+Key Learning: Empty namespaceSelector {} allows from all namespaces
+
+**Task NP-06: Allow Traffic from a Specific Namespace**
+- Priority: High
+- Type: Cross-Namespace Access
+- Dependencies: NP-05
+- Category: Selective Access
+- Estimated Time: 20 minutes
+
+Requirements:
+- Create multiple namespaces with labels
+- Deploy applications in each
+- Create NetworkPolicy using namespaceSelector with specific labels
+- Allow traffic only from namespace with matching label
+- Test from allowed namespace (success)
+- Test from non-allowed namespace (blocked)
+- Document selective namespace access pattern
+
+Key Learning: namespaceSelector with matchLabels enables specific namespace access
+
+**Task NP-07: Allow Traffic from Specific Pods in Another Namespace**
+- Priority: High
+- Type: Advanced Namespace Policy
+- Dependencies: NP-06
+- Category: Fine-grained Control
+- Estimated Time: 25 minutes
+
+Requirements:
+- Create source and target namespaces
+- Deploy multiple pods in source namespace
+- Create NetworkPolicy combining namespaceSelector AND podSelector
+- Allow traffic only from specific pods in specific namespace
+- Test from allowed pod in allowed namespace (success)
+- Test from non-allowed pod in allowed namespace (blocked)
+- Test from pods in other namespaces (blocked)
+- Document combined selector pattern
+
+Key Learning: Combining namespaceSelector and podSelector in same rule applies AND logic
+
+## Phase 4: External Traffic Management (NP-08)
+
+**Task NP-08: Allow External Traffic**
+- Priority: High
+- Type: External Access
+- Dependencies: NP-03
+- Category: Public Services
+- Estimated Time: 20 minutes
+
+Requirements:
+- Deploy web application behind LoadBalancer
+- Create NetworkPolicy allowing external clients
+- Use ipBlock with CIDR notation
+- Configure LoadBalancer ingress
+- Test external connectivity
+- Document pattern for public-facing services
+- Explain ingress controller integration
+
+Key Learning: ipBlock in ingress.from allows traffic from external IP ranges
+
+## Phase 5: Advanced Policies (NP-09 through NP-10)
+
+**Task NP-09: Allow Traffic Only to Certain Ports**
+- Priority: Medium
+- Type: Port-Level Control
+- Dependencies: NP-02
+- Category: Advanced
+- Estimated Time: 20 minutes
+
+Requirements:
+- Deploy multi-port application (e.g., web on 80, metrics on 9090)
+- Create NetworkPolicy with ports specification
+- Allow traffic only to specific port (e.g., port 80)
+- Block traffic to other ports (e.g., 9090)
+- Test access to allowed port (success)
+- Test access to blocked port (timeout)
+- Document port-level segmentation pattern
+
+Key Learning: ports array in ingress enables port-level traffic control
+
+**Task NP-10: Allow Traffic with Multiple Selectors**
+- Priority: Medium
+- Type: Complex Selectors
+- Dependencies: NP-07, NP-09
+- Category: Advanced
+- Estimated Time: 25 minutes
+
+Requirements:
+- Deploy multiple client applications
+- Deploy target application
+- Create NetworkPolicy with multiple ingress.from rules
+- Combine podSelector, namespaceSelector, and ipBlock rules
+- Test that traffic allowed from any matching rule (OR logic)
+- Verify traffic blocked if no rules match
+- Document multiple selector pattern and OR logic
+
+Key Learning: Multiple rules in ingress.from are evaluated with OR logic
+
+## Phase 6: Egress Control (NP-11 through NP-14)
+
+**Task NP-11: Deny Egress Traffic from Application**
+- Priority: High
+- Type: Egress Policy
+- Dependencies: NP-01
+- Category: Egress Control
+- Estimated Time: 15 minutes
+
+Requirements:
+- Deploy test application
+- Create NetworkPolicy with empty egress rules
+- Verify outbound connections are blocked
+- Test DNS resolution fails
+- Test external connectivity fails
+- Document egress deny-all pattern
+- Explain need for DNS whitelisting
+
+Key Learning: Empty egress array blocks all outbound traffic including DNS
+
+**Task NP-12: Deny All Non-Whitelisted Egress Traffic in Namespace**
+- Priority: High
+- Type: Namespace Egress
+- Dependencies: NP-11
+- Category: Zero-Trust Foundation
+- Estimated Time: 25 minutes
+
+Requirements:
+- Create namespace-wide egress deny policy
+- Whitelist DNS traffic (port 53 UDP)
+- Whitelist kube-system namespace access
+- Apply to all pods with podSelector: {}
+- Test DNS works after whitelisting
+- Test external traffic blocked
+- Document namespace egress deny pattern with DNS exception
+
+Key Learning: Must explicitly allow DNS for pods to resolve service names
+
+**Task NP-14: Deny External Egress Traffic**
+- Priority: High
+- Type: Egress Control
+- Dependencies: NP-12
+- Category: Data Exfiltration Prevention
+- Estimated Time: 25 minutes
+
+Requirements:
+- Deploy application that needs cluster-internal access only
+- Create NetworkPolicy allowing egress to cluster CIDR only
+- Use egress.to with ipBlock and except clauses
+- Allow internal cluster communication
+- Block external internet access
+- Test internal pod-to-pod communication (success)
+- Test external connectivity (blocked)
+- Document internal-only pattern
+
+Key Learning: ipBlock with CIDR ranges controls egress to specific networks
+
+# Logical Dependency Chain
+
+1. **Foundation** (NP-00): Must create cluster first with NetworkPolicy support
+2. **Basic Understanding** (NP-01, NP-02, NP-02A): Learn fundamental deny/allow patterns
+3. **Namespace Concepts** (NP-03, NP-04): Understand default-deny and isolation
+4. **Selective Access** (NP-05, NP-06, NP-07): Build on isolation with whitelisting
+5. **External Integration** (NP-08): Apply concepts to external traffic
+6. **Advanced Control** (NP-09, NP-10): Combine concepts for complex scenarios
+7. **Egress Foundation** (NP-11, NP-12): Mirror ingress concepts for outbound traffic
+8. **Complete Control** (NP-14): Combine all concepts for comprehensive security
+
+# Key Patterns and Concepts
+
+## NetworkPolicy Evaluation Rules
+- **Additive Union**: Multiple policies affecting same pod are combined (union)
+- **Default Allow**: No policy means all traffic allowed
+- **Policy Activation**: First policy on a pod activates default-deny
+- **No Explicit Deny**: Policies only allow; blocking is implicit
+- **OR Logic**: Multiple ingress.from rules evaluated with OR
+- **AND Logic**: namespaceSelector + podSelector in same rule uses AND
+
+## Common Pitfalls to Document
+- Forgetting to whitelist DNS in egress policies
+- Not understanding podSelector: {} applies to all pods
+- Confusion between multiple rules (OR) vs combined selectors (AND)
+- Not realizing policies are namespace-scoped
+- Missing namespaceSelector means same-namespace only
+
+# Testing Strategy
+Each recipe must include:
+- Pre-policy connectivity test (baseline)
+- Policy application
+- Positive test (allowed traffic)
+- Negative test (blocked traffic)
+- Verification commands
+- Cleanup procedures
+
+# Documentation Requirements
+For each recipe provide:
+- Clear use case description
+- Step-by-step commands
+- Complete YAML manifests
+- Expected command outputs
+- Troubleshooting tips
+- Visual diagram (GIF)
+- Relationship to other recipes
+
+# Appendix
+
+## Technical Specifications
+- Kubernetes API Version: networking.k8s.io/v1
+- Minimum Kubernetes Version: v1.7+
+- Required CNI Plugins: Calico, Cilium, Weave Net, or Antrea
+- Test Platform: Google Kubernetes Engine (GKE) v1.10+
+
+## Security Model
+- Layer 3/4 (IP/Port level) policies only
+- No Layer 7 (HTTP/gRPC) inspection
+- Complement with service mesh for L7 policies
+- Combine with RBAC and Pod Security Standards
+- Defense-in-depth approach
+
+## Performance Considerations
+- Policies evaluated at CNI level
+- Large policy counts may impact performance
+- Test scalability with your specific CNI
+- Monitor for increased connection latency
+
+## Best Practices to Document
+1. Start with default-deny (NP-03, NP-12)
+2. Use consistent labeling schemes
+3. Test in non-production first
+4. Document service dependencies
+5. Monitor traffic patterns before applying
+6. Progressive rollout approach
+7. Regular policy audits
+8. Combine with other security controls
+</PRD>

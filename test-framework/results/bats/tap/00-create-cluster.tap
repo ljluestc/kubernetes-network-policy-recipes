@@ -1,0 +1,89 @@
+1..6
+# Test duration: 0s
+not ok 1 00: Cluster should have NetworkPolicy API available in 435ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 9)
+#   `assert_success' failed
+#
+# -- command failed --
+# status : 1
+# output (2 lines):
+#   E1018 00:20:49.605537   24620 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   error: couldn't get available api versions from server: Get "http://localhost:8080/api?timeout=32s": dial tcp [::1]:8080: connect: connection refused
+# --
+#
+# Test duration: 0s
+not ok 2 00: Cluster should have nodes in Ready state in 234ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 15)
+#   `assert_success' failed
+#
+# -- command failed --
+# status : 1
+# output (6 lines):
+#   E1018 00:20:49.924961   24758 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:49.925303   24758 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:49.927761   24758 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:49.928305   24758 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:49.930750   24758 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 3 00: Kube-system namespace should exist in 270ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 21)
+#   `assert_success' failed
+#
+# -- command failed --
+# status : 1
+# output (6 lines):
+#   E1018 00:20:50.302946   24866 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.303578   24866 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.305314   24866 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.305616   24866 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.307908   24866 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 4 00: CNI plugin pods should be running in 177ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 27)
+#   `assert_success' failed
+#
+# -- command failed --
+# status : 1
+# output (6 lines):
+#   E1018 00:20:50.548517   24960 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.549126   24960 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.550921   24960 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.551479   24960 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   E1018 00:20:50.553013   24960 memcache.go:265] "Unhandled Error" err="couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+#   The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 0s
+not ok 5 00: Cluster should support NetworkPolicy creation in 145ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 46)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#
+# Test duration: 1s
+not ok 6 00: Cluster should support pod creation in 216ms
+# (from function `assert_success' in file test-framework/bats-tests/recipes/../../bats-libs/bats-assert/src/assert_success.bash, line 45,
+#  from function `create_test_namespace' in file test-framework/bats-tests/recipes/../helpers/test_helper.bash, line 76,
+#  in test file test-framework/bats-tests/recipes/00-create-cluster.bats, line 67)
+#   `create_test_namespace' failed
+#
+# -- command failed --
+# status : 1
+# output : The connection to the server localhost:8080 was refused - did you specify the right host or port?
+# --
+#

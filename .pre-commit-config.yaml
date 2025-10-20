@@ -1,0 +1,105 @@
+# Pre-commit hooks for Kubernetes Network Policy Recipes
+# See https://pre-commit.com for more information
+# Installation: pip install pre-commit && pre-commit install
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Fix end of files
+      - id: check-yaml
+        name: Check YAML syntax
+        args: ['--allow-multiple-documents']
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      - id: check-executables-have-shebangs
+        name: Check executables have shebangs
+      - id: check-shebang-scripts-are-executable
+        name: Check shebang scripts are executable
+
+  # YAML linting for NetworkPolicy files
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: Lint YAML files
+        args: ['-d', '{extends: default, rules: {line-length: {max: 120}, document-start: disable, comments: {min-spaces-from-content: 1}}}']
+        files: \.(yaml|yml)$
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: Lint shell scripts
+        args: ['-x', '-e', 'SC1090,SC1091']
+        types: [shell]
+
+  # Shell script formatting
+  - repo: https://github.com/mvdan/sh
+    rev: v3.8.0
+    hooks:
+      - id: shfmt
+        name: Format shell scripts
+        args: ['-i', '4', '-ci', '-sr', '-w']
+        types: [shell]
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.39.0
+    hooks:
+      - id: markdownlint
+        name: Lint markdown files
+        args: ['--fix', '--disable', 'MD013', 'MD033', 'MD034']
+
+  # Security: Detect secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: |
+          (?x)^(
+            package-lock.json|
+            .*\.lock|
+            .*/\.taskmaster/.*
+          )$
+
+  # Custom: BATS test validation
+  - repo: local
+    hooks:
+      - id: check-bats-tests
+        name: Check BATS tests exist for recipes
+        entry: test-framework/hooks/check-bats-tests.sh
+        language: script
+        files: '^[0-9]{2}[a-z]?-.*\.md$'
+        pass_filenames: true
+        stages: [commit]
+
+  # Custom: Kubernetes API version validation
+  - repo: local
+    hooks:
+      - id: validate-k8s-api-version
+        name: Validate Kubernetes API versions
+        entry: test-framework/hooks/validate-k8s-api.sh
+        language: script
+        files: \.(yaml|yml)$
+        pass_filenames: true
+        stages: [commit]
+
+  # Markdown link checking (optional, can be slow)
+  - repo: https://github.com/tcort/markdown-link-check
+    rev: v3.12.1
+    hooks:
+      - id: markdown-link-check
+        name: Check markdown links
+        args: ['--config', '.markdown-link-check.json', '--quiet']
+        stages: [manual]  # Run only with --hook-stage manual due to performance
